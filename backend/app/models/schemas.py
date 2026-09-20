@@ -7,6 +7,7 @@ class DecisionInput(BaseModel):
     inventory: float = Field(default=60, ge=0)
     capacity: float = Field(default=100, gt=0)
     lead_time: float = Field(default=7, ge=0)
+    previous_state: dict | None = Field(default=None)
 
 
 class CausalStep(BaseModel):
@@ -32,6 +33,37 @@ class CounterfactualOption(BaseModel):
     projected_cost: float
 
 
+class MetricDelta(BaseModel):
+    name: str
+    previous: str
+    current: str
+    delta: str
+    direction: Literal["INCREASE", "DECREASE", "UNCHANGED", "SHIFT"]
+    impact: Literal["POSITIVE", "NEGATIVE", "NEUTRAL"]
+
+
+class StateChange(BaseModel):
+    has_previous: bool
+    summary: str
+    deltas: list[MetricDelta]
+
+
+class MetricComparisonRow(BaseModel):
+    name: str
+    unit: str
+    val_a: str | None = None
+    val_b: str | None = None
+    val_c: str | None = None
+    diff_b_vs_a: str | None = None
+    diff_c_vs_a: str | None = None
+
+
+class FuturesComparisonResult(BaseModel):
+    active_slots: list[str]
+    summary: str
+    rows: list[MetricComparisonRow]
+
+
 class SimulationResult(BaseModel):
     demand: float
     inventory: float
@@ -46,5 +78,8 @@ class SimulationResult(BaseModel):
     causal_chain: list[CausalStep]
     causal_summary: str
     counterfactuals: list[CounterfactualOption]
+    state_change: StateChange
+
+
 
 

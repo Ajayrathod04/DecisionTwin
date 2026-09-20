@@ -1,8 +1,8 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.models.schemas import DecisionInput, SimulationResult
-from app.engine.simulation import simulate
+from app.models.schemas import DecisionInput, FuturesComparisonResult, SimulationResult
+from app.engine.simulation import compare_futures, simulate
 
 app = FastAPI(title="DecisionTwin API", version="0.1.0")
 
@@ -26,3 +26,9 @@ def health() -> dict[str, str]:
 @app.post("/simulate", response_model=SimulationResult)
 def run_simulation(decision: DecisionInput) -> SimulationResult:
     return simulate(decision)
+
+
+@app.post("/compare-futures", response_model=FuturesComparisonResult)
+def run_compare_futures(scenarios: dict) -> FuturesComparisonResult:
+    return compare_futures(scenarios)
+

@@ -1,3 +1,5 @@
+
+
 import { useMemo, useState } from 'react'
 import {
   Background,
@@ -35,6 +37,21 @@ type CounterfactualOption = {
   projected_cost: number
 }
 
+type MetricDelta = {
+  name: string
+  previous: string
+  current: string
+  delta: string
+  direction: 'INCREASE' | 'DECREASE' | 'UNCHANGED' | 'SHIFT'
+  impact: 'POSITIVE' | 'NEGATIVE' | 'NEUTRAL'
+}
+
+type StateChange = {
+  has_previous: boolean
+  summary: string
+  deltas: MetricDelta[]
+}
+
 type SimulationResult = {
   demand: number
   inventory: number
@@ -49,6 +66,36 @@ type SimulationResult = {
   causal_chain: CausalStep[]
   causal_summary: string
   counterfactuals: CounterfactualOption[]
+  state_change: StateChange
+}
+
+type ScenarioSlot = 'A' | 'B' | 'C'
+
+type ScenarioSnapshot = {
+  slot: ScenarioSlot
+  name: string
+  demand: number
+  inventory: number
+  capacity: number
+  lead_time: number
+  result: SimulationResult
+  savedAt: string
+}
+
+type MetricComparisonRow = {
+  name: string
+  unit: string
+  val_a: string | null
+  val_b: string | null
+  val_c: string | null
+  diff_b_vs_a: string | null
+  diff_c_vs_a: string | null
+}
+
+type FuturesComparisonResult = {
+  active_slots: string[]
+  summary: string
+  rows: MetricComparisonRow[]
 }
 
 type DecisionNodeProps = {
@@ -181,6 +228,11 @@ const initialResult: SimulationResult = {
       projected_cost: 47500,
     },
   ],
+  state_change: {
+    has_previous: false,
+    summary: 'Baseline simulation established. Adjust decision sliders and re-run to compare state changes.',
+    deltas: [],
+  },
 }
 
 function App() {
@@ -193,6 +245,17 @@ function App() {
   const [error, setError] = useState('')
   const [showWhy, setShowWhy] = useState(false)
   const [showWhatIf, setShowWhatIf] = useState(false)
+  const [showWhatChanged, setShowWhatChanged] = useState(false)
+  const [showScenarios, setShowScenarios] = useState(false)
+  const [showCompareFutures, setShowCompareFutures] = useState(false)
+
+  const [scenarios, setScenarios] = useState<Record<ScenarioSlot, ScenarioSnapshot | null>>({
+    A: null,
+    B: null,
+    C: null,
+  })
+  const [activeScenario, setActiveScenario] = useState<ScenarioSlot | null>(null)
+  const [futuresComparison, setFuturesComparison] = useState<FuturesComparisonResult | null>(null)
 
   async function simulate() {
     setLoading(true)
@@ -207,6 +270,7 @@ function App() {
           inventory,
           capacity,
           lead_time: leadTime,
+          previous_state: result,
         }),
       })
 
@@ -223,11 +287,65 @@ function App() {
     }
   }
 
+  async function fetchCompareFutures(activeScenarios: Record<ScenarioSlot, ScenarioSnapshot | null>) {
+    try {
+      const response = await fetch('http://127.0.0.1:8000/compare-futures', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(activeScenarios),
+      })
+
+      if (!response.ok) return
+
+      const data = (await response.json()) as FuturesComparisonResult
+      setFuturesComparison(data)
+    } catch {
+      // Fail gracefully
+    }
+  }
+
   function applyRecommendation(opt: CounterfactualOption) {
     if (opt.target_field === 'capacity') setCapacity(opt.recommended_value)
     else if (opt.target_field === 'demand') setDemand(opt.recommended_value)
     else if (opt.target_field === 'inventory') setInventory(opt.recommended_value)
     else if (opt.target_field === 'lead_time') setLeadTime(opt.recommended_value)
+  }
+
+  function saveScenario(slot: ScenarioSlot) {
+    const newSnapshot: ScenarioSnapshot = {
+      slot,
+      name: `Scenario ${slot}`,
+      demand,
+      inventory,
+      capacity,
+      lead_time: leadTime,
+      result,
+      savedAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+    }
+    const updated = { ...scenarios, [slot]: newSnapshot }
+    setScenarios(updated)
+    setActiveScenario(slot)
+    void fetchCompareFutures(updated)
+  }
+
+  function loadScenario(slot: ScenarioSlot) {
+    const sc = scenarios[slot]
+    if (!sc) return
+    setDemand(sc.demand)
+    setInventory(sc.inventory)
+    setCapacity(sc.capacity)
+    setLeadTime(sc.lead_time)
+    setResult(sc.result)
+    setActiveScenario(slot)
+  }
+
+  function clearScenario(slot: ScenarioSlot) {
+    const updated = { ...scenarios, [slot]: null }
+    setScenarios(updated)
+    if (activeScenario === slot) {
+      setActiveScenario(null)
+    }
+    void fetchCompareFutures(updated)
   }
 
   const nodes = useMemo<Node[]>(
@@ -282,6 +400,9 @@ function App() {
           onWhyClick: () => {
             setShowWhy((prev) => !prev)
             setShowWhatIf(false)
+            setShowWhatChanged(false)
+            setShowScenarios(false)
+            setShowCompareFutures(false)
           },
         },
       },
@@ -411,10 +532,30 @@ function App() {
 
           {error && <div className="error-box">{error}</div>}
 
+          <div className="quick-scenario-section">
+            <div className="section-label">SAVE CURRENT SCENARIO</div>
+            <div className="scenario-quick-btn-grid">
+              {(['A', 'B', 'C'] as ScenarioSlot[]).map((slot) => {
+                const sc = scenarios[slot]
+                const isActive = activeScenario === slot
+                return (
+                  <button
+                    key={slot}
+                    className={`quick-slot-btn ${sc ? 'has-data' : ''} ${isActive ? 'is-active' : ''}`}
+                    onClick={() => saveScenario(slot)}
+                    title={sc ? `Overwrite Scenario ${slot}` : `Save current state as Scenario ${slot}`}
+                  >
+                    {sc ? `Save ${slot} ✓` : `Save ${slot}`}
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+
           <div className="model-note">
             <span>DETERMINISTIC MODEL</span>
             <p>
-              Results, causal traces & counterfactuals come directly from the deterministic engine source of truth.
+              Results, causal traces, counterfactuals, deltas & futures come directly from the simulation engine.
             </p>
           </div>
         </aside>
@@ -431,6 +572,9 @@ function App() {
                 onClick={() => {
                   setShowWhy((prev) => !prev)
                   setShowWhatIf(false)
+                  setShowWhatChanged(false)
+                  setShowScenarios(false)
+                  setShowCompareFutures(false)
                 }}
               >
                 <span className="why-badge-icon">?</span> WHY? Causal Trace
@@ -441,9 +585,52 @@ function App() {
                 onClick={() => {
                   setShowWhatIf((prev) => !prev)
                   setShowWhy(false)
+                  setShowWhatChanged(false)
+                  setShowScenarios(false)
+                  setShowCompareFutures(false)
                 }}
               >
                 <span className="whatif-badge-icon">⚡</span> WHAT IF? Counterfactuals
+              </button>
+
+              <button
+                className={`whatchanged-toggle-button ${showWhatChanged ? 'active' : ''}`}
+                onClick={() => {
+                  setShowWhatChanged((prev) => !prev)
+                  setShowWhy(false)
+                  setShowWhatIf(false)
+                  setShowScenarios(false)
+                  setShowCompareFutures(false)
+                }}
+              >
+                <span className="whatchanged-badge-icon">Δ</span> WHAT CHANGED?
+              </button>
+
+              <button
+                className={`scenarios-toggle-button ${showScenarios ? 'active' : ''}`}
+                onClick={() => {
+                  setShowScenarios((prev) => !prev)
+                  setShowWhy(false)
+                  setShowWhatIf(false)
+                  setShowWhatChanged(false)
+                  setShowCompareFutures(false)
+                }}
+              >
+                <span className="scenarios-badge-icon">🗂</span> SCENARIOS A/B/C
+              </button>
+
+              <button
+                className={`futures-toggle-button ${showCompareFutures ? 'active' : ''}`}
+                onClick={async () => {
+                  setShowCompareFutures((prev) => !prev)
+                  setShowWhy(false)
+                  setShowWhatIf(false)
+                  setShowWhatChanged(false)
+                  setShowScenarios(false)
+                  await fetchCompareFutures(scenarios)
+                }}
+              >
+                <span className="futures-badge-icon">📊</span> COMPARE FUTURES
               </button>
 
               <div className={`risk-badge risk-${result.risk.toLowerCase()}`}>
@@ -594,6 +781,253 @@ function App() {
               </div>
             </div>
           )}
+
+          {showWhatChanged && (
+            <div className="whatchanged-panel">
+              <div className="whatchanged-header">
+                <div>
+                  <div className="section-label">SIMULATION COMPARISON</div>
+                  <h3>What Changed Since Previous Run?</h3>
+                </div>
+                <button className="close-why-btn" onClick={() => setShowWhatChanged(false)}>
+                  ✕ Close Comparison
+                </button>
+              </div>
+
+              {!result.state_change.has_previous ? (
+                <div className="whatchanged-empty-card">
+                  <div className="empty-title">INITIAL BASELINE ESTABLISHED</div>
+                  <p>
+                    Adjust decision parameters (Demand, Capacity, Inventory, Lead Time) and click <strong>Run simulation</strong> to compare baseline vs new simulation state.
+                  </p>
+                </div>
+              ) : (
+                <>
+                  <div className="whatchanged-summary-card">
+                    <div className="summary-badge">KEY METRIC SHIFT SUMMARY</div>
+                    <p>{result.state_change.summary}</p>
+                  </div>
+
+                  <div className="whatchanged-grid">
+                    {result.state_change.deltas.map((item) => (
+                      <div
+                        key={item.name}
+                        className={`whatchanged-card impact-${item.impact.toLowerCase()}`}
+                      >
+                        <div className="whatchanged-card-top">
+                          <span className="metric-name">{item.name}</span>
+                          <span className={`delta-pill delta-${item.impact.toLowerCase()}`}>
+                            {item.delta}
+                          </span>
+                        </div>
+                        <div className="whatchanged-values">
+                          <div>
+                            <span>PREVIOUS</span>
+                            <strong>{item.previous}</strong>
+                          </div>
+                          <div className="value-arrow">→</div>
+                          <div>
+                            <span>CURRENT</span>
+                            <strong>{item.current}</strong>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+
+          {showScenarios && (
+            <div className="scenarios-panel">
+              <div className="scenarios-header">
+                <div>
+                  <div className="section-label">DECISION SCENARIOS</div>
+                  <h3>Scenario A / B / C Comparison</h3>
+                </div>
+                <div className="header-actions">
+                  <button
+                    className="futures-toggle-button active"
+                    onClick={async () => {
+                      setShowCompareFutures(true)
+                      setShowScenarios(false)
+                      await fetchCompareFutures(scenarios)
+                    }}
+                  >
+                    <span className="futures-badge-icon">📊</span> Compare Futures Side-by-Side
+                  </button>
+                  <button className="close-why-btn" onClick={() => setShowScenarios(false)}>
+                    ✕ Close Scenarios
+                  </button>
+                </div>
+              </div>
+
+              <div className="scenarios-grid">
+                {(['A', 'B', 'C'] as ScenarioSlot[]).map((slot) => {
+                  const sc = scenarios[slot]
+                  const isActive = activeScenario === slot
+
+                  return (
+                    <div
+                      key={slot}
+                      className={`scenario-card ${sc ? 'has-data' : 'empty'} ${isActive ? 'active-scenario' : ''}`}
+                    >
+                      <div className="scenario-card-header">
+                        <div className="scenario-title">
+                          <strong>SCENARIO {slot}</strong>
+                          {isActive && <span className="active-tag">ACTIVE</span>}
+                        </div>
+                        {sc && <span className="saved-time">{sc.savedAt}</span>}
+                      </div>
+
+                      {!sc ? (
+                        <div className="empty-scenario-body">
+                          <p>No saved state in slot {slot}.</p>
+                          <button className="save-scenario-btn" onClick={() => saveScenario(slot)}>
+                            Save Current State as {slot}
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="saved-scenario-body">
+                          <div className="scenario-input-strip">
+                            <div>
+                              <span>DEMAND</span>
+                              <strong>{sc.demand}</strong>
+                            </div>
+                            <div>
+                              <span>CAPACITY</span>
+                              <strong>{sc.capacity}</strong>
+                            </div>
+                            <div>
+                              <span>INVENTORY</span>
+                              <strong>{sc.inventory}</strong>
+                            </div>
+                            <div>
+                              <span>LEAD TIME</span>
+                              <strong>{sc.lead_time}d</strong>
+                            </div>
+                          </div>
+
+                          <div className="scenario-outcome-strip">
+                            <div>
+                              <span>RISK</span>
+                              <span className={`risk-badge risk-${sc.result.risk.toLowerCase()}`}>
+                                {sc.result.risk}
+                              </span>
+                            </div>
+                            <div>
+                              <span>UTILIZATION</span>
+                              <strong>{Math.round(sc.result.utilization * 100)}%</strong>
+                            </div>
+                            <div>
+                              <span>DELAY</span>
+                              <strong>{sc.result.delay_days}d</strong>
+                            </div>
+                            <div>
+                              <span>COST</span>
+                              <strong>${sc.result.cost.toLocaleString()}</strong>
+                            </div>
+                          </div>
+
+                          <div className="scenario-actions">
+                            <button className="load-scenario-btn" onClick={() => loadScenario(slot)}>
+                              Load Scenario {slot}
+                            </button>
+                            <button
+                              className="overwrite-scenario-btn"
+                              onClick={() => saveScenario(slot)}
+                              title="Overwrite with current state"
+                            >
+                              Overwrite
+                            </button>
+                            <button
+                              className="clear-scenario-btn"
+                              onClick={() => clearScenario(slot)}
+                              title="Clear scenario"
+                            >
+                              Clear
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          )}
+
+          {showCompareFutures && (
+            <div className="futures-panel">
+              <div className="futures-header">
+                <div>
+                  <div className="section-label">FACTUAL TRADEOFF MATRIX</div>
+                  <h3>Side-by-Side Future Comparison</h3>
+                </div>
+                <button className="close-why-btn" onClick={() => setShowCompareFutures(false)}>
+                  ✕ Close View
+                </button>
+              </div>
+
+              {!futuresComparison || futuresComparison.active_slots.length < 2 ? (
+                <div className="futures-empty-card">
+                  <div className="empty-title">SCENARIO COMPARISON REQUIRES AT LEAST 2 SAVED SCENARIOS</div>
+                  <p>
+                    Save at least 2 scenarios (e.g. <strong>Scenario A</strong> and <strong>Scenario B</strong>) using the <strong>Save A / B / C</strong> buttons to generate a side-by-side factual trade-off matrix.
+                  </p>
+                </div>
+              ) : (
+                <>
+                  <div className="futures-summary-card">
+                    <div className="summary-badge">DETERMINISTIC TRADEOFF SUMMARY</div>
+                    <p>{futuresComparison.summary}</p>
+                  </div>
+
+                  <div className="futures-matrix-container">
+                    <table className="futures-matrix-table">
+                      <thead>
+                        <tr>
+                          <th>METRIC</th>
+                          <th>SCENARIO A</th>
+                          <th>SCENARIO B {futuresComparison.active_slots.includes('B') && <span className="diff-tag">(Diff vs A)</span>}</th>
+                          <th>SCENARIO C {futuresComparison.active_slots.includes('C') && <span className="diff-tag">(Diff vs A)</span>}</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {futuresComparison.rows.map((row) => (
+                          <tr key={row.name}>
+                            <td className="row-name">{row.name}</td>
+                            <td className="row-val-a">{row.val_a ?? '-'}</td>
+                            <td className="row-val-b">
+                              <div className="cell-flex">
+                                <span>{row.val_b ?? '-'}</span>
+                                {row.diff_b_vs_a && row.diff_b_vs_a !== '-' && row.diff_b_vs_a !== '=' && (
+                                  <span className={`diff-pill ${row.diff_b_vs_a.startsWith('+') ? 'diff-up' : 'diff-down'}`}>
+                                    {row.diff_b_vs_a}
+                                  </span>
+                                )}
+                              </div>
+                            </td>
+                            <td className="row-val-c">
+                              <div className="cell-flex">
+                                <span>{row.val_c ?? '-'}</span>
+                                {row.diff_c_vs_a && row.diff_c_vs_a !== '-' && row.diff_c_vs_a !== '=' && (
+                                  <span className={`diff-pill ${row.diff_c_vs_a.startsWith('+') ? 'diff-up' : 'diff-down'}`}>
+                                    {row.diff_c_vs_a}
+                                  </span>
+                                )}
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </>
+              )}
+            </div>
+          )}
         </section>
       </section>
     </main>
@@ -601,5 +1035,8 @@ function App() {
 }
 
 export default App
+
+
+
 
 
