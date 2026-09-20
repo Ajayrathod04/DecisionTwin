@@ -1,15 +1,11 @@
 from pydantic import BaseModel, Field
 from typing import Literal
-
-
 class DecisionInput(BaseModel):
     demand: float = Field(default=100, ge=0)
     inventory: float = Field(default=60, ge=0)
     capacity: float = Field(default=100, gt=0)
     lead_time: float = Field(default=7, ge=0)
     previous_state: dict | None = Field(default=None)
-
-
 class CausalStep(BaseModel):
     step: int
     label: str
@@ -17,8 +13,6 @@ class CausalStep(BaseModel):
     symbol: str
     value: str
     detail: str
-
-
 class CounterfactualOption(BaseModel):
     id: str
     title: str
@@ -31,8 +25,6 @@ class CounterfactualOption(BaseModel):
     projected_utilization: float
     projected_delay_days: float
     projected_cost: float
-
-
 class MetricDelta(BaseModel):
     name: str
     previous: str
@@ -40,14 +32,10 @@ class MetricDelta(BaseModel):
     delta: str
     direction: Literal["INCREASE", "DECREASE", "UNCHANGED", "SHIFT"]
     impact: Literal["POSITIVE", "NEGATIVE", "NEUTRAL"]
-
-
 class StateChange(BaseModel):
     has_previous: bool
     summary: str
     deltas: list[MetricDelta]
-
-
 class MetricComparisonRow(BaseModel):
     name: str
     unit: str
@@ -56,14 +44,10 @@ class MetricComparisonRow(BaseModel):
     val_c: str | None = None
     diff_b_vs_a: str | None = None
     diff_c_vs_a: str | None = None
-
-
 class FuturesComparisonResult(BaseModel):
     active_slots: list[str]
     summary: str
     rows: list[MetricComparisonRow]
-
-
 class SimulationResult(BaseModel):
     demand: float
     inventory: float
@@ -79,7 +63,22 @@ class SimulationResult(BaseModel):
     causal_summary: str
     counterfactuals: list[CounterfactualOption]
     state_change: StateChange
-
-
-
-
+class EvidenceTraceItem(BaseModel):
+    metric_name: str
+    exact_value: str
+    source_component: str
+    description: str
+class DecisionExplanation(BaseModel):
+    provider_used: str
+    is_ai_generated: bool
+    what_happened: str
+    why_it_happened: str
+    primary_driver: str
+    important_consequence: str
+    relevant_trade_off: str
+    deterministic_facts: list[str]
+    evidence_trace: list[EvidenceTraceItem]
+class ExplanationRequest(BaseModel):
+    decision: DecisionInput
+    result: SimulationResult
+    scenarios: dict | None = Field(default=None)

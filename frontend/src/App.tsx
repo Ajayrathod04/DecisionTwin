@@ -1,5 +1,3 @@
-
-
 import { useMemo, useState } from 'react'
 import {
   Background,
@@ -96,6 +94,25 @@ type FuturesComparisonResult = {
   active_slots: string[]
   summary: string
   rows: MetricComparisonRow[]
+}
+
+type EvidenceTraceItem = {
+  metric_name: string
+  exact_value: string
+  source_component: string
+  description: string
+}
+
+type DecisionExplanation = {
+  provider_used: string
+  is_ai_generated: boolean
+  what_happened: string
+  why_it_happened: string
+  primary_driver: string
+  important_consequence: string
+  relevant_trade_off: string
+  deterministic_facts: string[]
+  evidence_trace: EvidenceTraceItem[]
 }
 
 type DecisionNodeProps = {
@@ -248,6 +265,10 @@ function App() {
   const [showWhatChanged, setShowWhatChanged] = useState(false)
   const [showScenarios, setShowScenarios] = useState(false)
   const [showCompareFutures, setShowCompareFutures] = useState(false)
+  const [showExplanation, setShowExplanation] = useState(false)
+
+  const [explanation, setExplanation] = useState<DecisionExplanation | null>(null)
+  const [loadingExplanation, setLoadingExplanation] = useState(false)
 
   const [scenarios, setScenarios] = useState<Record<ScenarioSlot, ScenarioSnapshot | null>>({
     A: null,
@@ -280,6 +301,7 @@ function App() {
 
       const data = (await response.json()) as SimulationResult
       setResult(data)
+      setExplanation(null)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unable to reach the simulation engine.')
     } finally {
@@ -301,6 +323,35 @@ function App() {
       setFuturesComparison(data)
     } catch {
       // Fail gracefully
+    }
+  }
+
+  async function fetchExplanation() {
+    setLoadingExplanation(true)
+    setShowExplanation(true)
+    try {
+      const response = await fetch('http://127.0.0.1:8000/explain', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          decision: {
+            demand,
+            inventory,
+            capacity,
+            lead_time: leadTime,
+          },
+          result,
+          scenarios,
+        }),
+      })
+
+      if (!response.ok) throw new Error('Failed to generate explanation')
+      const data = (await response.json()) as DecisionExplanation
+      setExplanation(data)
+    } catch {
+      // Graceful fallback handled backend-side
+    } finally {
+      setLoadingExplanation(false)
     }
   }
 
@@ -398,53 +449,27 @@ function App() {
           isHighlighted: showWhy,
           showWhyButton: true,
           onWhyClick: () => {
-            setShowWhy((prev) => !prev)
+            setShowWhy(true)
             setShowWhatIf(false)
             setShowWhatChanged(false)
             setShowScenarios(false)
             setShowCompareFutures(false)
+            setShowExplanation(false)
           },
         },
       },
     ],
-    [capacity, demand, inventory, leadTime, result, showWhy],
+    [demand, inventory, capacity, leadTime, result, showWhy]
   )
 
-  const strokeColor =
-    result.risk === 'HIGH' ? '#ef4444' : result.risk === 'MEDIUM' ? '#f59e0b' : '#10b981'
-
-  const edges: Edge[] = useMemo(
+  const edges = useMemo<Edge[]>(
     () => [
-      {
-        id: 'decision-capacity',
-        source: 'input',
-        target: 'capacity',
-        animated: true,
-        style: { stroke: showWhy ? strokeColor : '#64748b', strokeWidth: showWhy ? 3 : 1.5 },
-      },
-      {
-        id: 'decision-inventory',
-        source: 'input',
-        target: 'inventory',
-        animated: true,
-        style: { stroke: showWhy ? strokeColor : '#64748b', strokeWidth: showWhy ? 3 : 1.5 },
-      },
-      {
-        id: 'capacity-consequence',
-        source: 'capacity',
-        target: 'consequence',
-        animated: true,
-        style: { stroke: showWhy ? strokeColor : '#64748b', strokeWidth: showWhy ? 3 : 1.5 },
-      },
-      {
-        id: 'inventory-consequence',
-        source: 'inventory',
-        target: 'consequence',
-        animated: true,
-        style: { stroke: showWhy ? strokeColor : '#64748b', strokeWidth: showWhy ? 3 : 1.5 },
-      },
+      { id: 'e-input-capacity', source: 'input', target: 'capacity', animated: true },
+      { id: 'e-input-inventory', source: 'input', target: 'inventory', animated: true },
+      { id: 'e-capacity-consequence', source: 'capacity', target: 'consequence', animated: true },
+      { id: 'e-inventory-consequence', source: 'inventory', target: 'consequence', animated: true },
     ],
-    [showWhy, strokeColor],
+    []
   )
 
   return (
@@ -555,7 +580,7 @@ function App() {
           <div className="model-note">
             <span>DETERMINISTIC MODEL</span>
             <p>
-              Results, causal traces, counterfactuals, deltas & futures come directly from the simulation engine.
+              Results, causal traces, counterfactuals, deltas, futures & explanations derive from simulation logic.
             </p>
           </div>
         </aside>
@@ -575,6 +600,7 @@ function App() {
                   setShowWhatChanged(false)
                   setShowScenarios(false)
                   setShowCompareFutures(false)
+                  setShowExplanation(false)
                 }}
               >
                 <span className="why-badge-icon">?</span> WHY? Causal Trace
@@ -588,6 +614,7 @@ function App() {
                   setShowWhatChanged(false)
                   setShowScenarios(false)
                   setShowCompareFutures(false)
+                  setShowExplanation(false)
                 }}
               >
                 <span className="whatif-badge-icon">⚡</span> WHAT IF? Counterfactuals
@@ -601,6 +628,7 @@ function App() {
                   setShowWhatIf(false)
                   setShowScenarios(false)
                   setShowCompareFutures(false)
+                  setShowExplanation(false)
                 }}
               >
                 <span className="whatchanged-badge-icon">Δ</span> WHAT CHANGED?
@@ -614,6 +642,7 @@ function App() {
                   setShowWhatIf(false)
                   setShowWhatChanged(false)
                   setShowCompareFutures(false)
+                  setShowExplanation(false)
                 }}
               >
                 <span className="scenarios-badge-icon">🗂</span> SCENARIOS A/B/C
@@ -627,10 +656,29 @@ function App() {
                   setShowWhatIf(false)
                   setShowWhatChanged(false)
                   setShowScenarios(false)
+                  setShowExplanation(false)
                   await fetchCompareFutures(scenarios)
                 }}
               >
                 <span className="futures-badge-icon">📊</span> COMPARE FUTURES
+              </button>
+
+              <button
+                className={`explanation-toggle-button ${showExplanation ? 'active' : ''}`}
+                onClick={() => {
+                  if (!showExplanation) {
+                    void fetchExplanation()
+                  } else {
+                    setShowExplanation(false)
+                  }
+                  setShowWhy(false)
+                  setShowWhatIf(false)
+                  setShowWhatChanged(false)
+                  setShowScenarios(false)
+                  setShowCompareFutures(false)
+                }}
+              >
+                <span className="explanation-badge-icon">🧠</span> AI EXPLANATION
               </button>
 
               <div className={`risk-badge risk-${result.risk.toLowerCase()}`}>
@@ -698,37 +746,27 @@ function App() {
                   <h3>Why did this outcome occur?</h3>
                 </div>
                 <button className="close-why-btn" onClick={() => setShowWhy(false)}>
-                  ✕ Close Trace
+                  ✕ Close View
                 </button>
               </div>
 
               <div className="causal-summary-card">
-                <div className="summary-badge">DETERMINISTIC ROOT CAUSE</div>
+                <div className="causal-summary-label">ENGINE CAUSAL SUMMARY</div>
                 <p>{result.causal_summary}</p>
               </div>
 
-              <div className="causal-chain-container">
-                <div className="chain-heading">Causal Chain Sequence</div>
-                <div className="causal-chain-flow">
-                  {result.causal_chain.map((step, idx) => (
-                    <div key={step.step} className="causal-step-wrapper">
-                      <div className={`causal-step-card trend-${step.trend.toLowerCase()}`}>
-                        <div className="step-top-row">
-                          <span className="step-number">0{step.step}</span>
-                          <span className={`step-symbol symbol-${step.trend.toLowerCase()}`}>
-                            {step.symbol}
-                          </span>
-                        </div>
-                        <div className="step-label">{step.label}</div>
-                        <div className="step-value">{step.value}</div>
-                        <p className="step-detail">{step.detail}</p>
-                      </div>
-                      {idx < result.causal_chain.length - 1 && (
-                        <div className="causal-arrow">→</div>
-                      )}
+              <div className="causal-chain-grid">
+                {result.causal_chain.map((step) => (
+                  <div key={step.step} className={`causal-step-card trend-${step.trend.toLowerCase()}`}>
+                    <div className="step-badge">
+                      <span className="step-num">0{step.step}</span>
+                      <span className="step-symbol">{step.symbol}</span>
                     </div>
-                  ))}
-                </div>
+                    <div className="step-label">{step.label}</div>
+                    <div className="step-value">{step.value}</div>
+                    <div className="step-detail">{step.detail}</div>
+                  </div>
+                ))}
               </div>
             </div>
           )}
@@ -738,44 +776,49 @@ function App() {
               <div className="whatif-header">
                 <div>
                   <div className="section-label">COUNTERFACTUAL ANALYSIS</div>
-                  <h3>What-If & Bottleneck Mitigation</h3>
+                  <h3>What if you made a different decision?</h3>
                 </div>
                 <button className="close-why-btn" onClick={() => setShowWhatIf(false)}>
-                  ✕ Close Analysis
+                  ✕ Close View
                 </button>
               </div>
 
-              <div className="counterfactual-grid">
+              <div className="counterfactual-cards-grid">
                 {result.counterfactuals.map((opt) => (
                   <div key={opt.id} className="counterfactual-card">
-                    <div className="card-top">
-                      <span className="card-title">{opt.title}</span>
+                    <div className="cf-card-header">
+                      <div className="cf-title">{opt.title}</div>
                       <span className={`risk-badge risk-${opt.projected_risk.toLowerCase()}`}>
                         {opt.projected_risk} RISK
                       </span>
                     </div>
-                    <div className="card-action">{opt.action}</div>
-                    <p className="card-summary">{opt.impact_summary}</p>
-                    <div className="card-metrics">
+
+                    <div className="cf-action">{opt.action}</div>
+                    <div className="cf-impact">{opt.impact_summary}</div>
+
+                    <div className="cf-metrics-grid">
                       <div>
-                        <span>PROJ. UTILIZATION</span>
+                        <span>UTILIZATION</span>
                         <strong>{Math.round(opt.projected_utilization * 100)}%</strong>
                       </div>
                       <div>
-                        <span>PROJ. DELAY</span>
+                        <span>DELAY</span>
                         <strong>{opt.projected_delay_days} days</strong>
                       </div>
                       <div>
-                        <span>PROJ. COST</span>
+                        <span>EST. COST</span>
                         <strong>${opt.projected_cost.toLocaleString()}</strong>
                       </div>
                     </div>
-                    <button
-                      className="apply-recommendation-btn"
-                      onClick={() => applyRecommendation(opt)}
-                    >
-                      Apply Adjustment Slider →
-                    </button>
+
+                    {opt.delta !== 0 && (
+                      <button
+                        className="apply-recommendation-btn"
+                        onClick={() => applyRecommendation(opt)}
+                      >
+                        Apply Decision ({opt.delta > 0 ? `+${opt.delta}` : opt.delta})
+                      </button>
+                    )}
                   </div>
                 ))}
               </div>
@@ -786,49 +829,45 @@ function App() {
             <div className="whatchanged-panel">
               <div className="whatchanged-header">
                 <div>
-                  <div className="section-label">SIMULATION COMPARISON</div>
-                  <h3>What Changed Since Previous Run?</h3>
+                  <div className="section-label">STATE CHANGE COMPARISON</div>
+                  <h3>What changed since the last simulation?</h3>
                 </div>
                 <button className="close-why-btn" onClick={() => setShowWhatChanged(false)}>
-                  ✕ Close Comparison
+                  ✕ Close View
                 </button>
               </div>
 
               {!result.state_change.has_previous ? (
                 <div className="whatchanged-empty-card">
-                  <div className="empty-title">INITIAL BASELINE ESTABLISHED</div>
-                  <p>
-                    Adjust decision parameters (Demand, Capacity, Inventory, Lead Time) and click <strong>Run simulation</strong> to compare baseline vs new simulation state.
-                  </p>
+                  <div className="empty-title">INITIAL BASELINE SIMULATION</div>
+                  <p>{result.state_change.summary}</p>
                 </div>
               ) : (
                 <>
                   <div className="whatchanged-summary-card">
-                    <div className="summary-badge">KEY METRIC SHIFT SUMMARY</div>
+                    <div className="summary-badge">DELTA HIGHLIGHTS</div>
                     <p>{result.state_change.summary}</p>
                   </div>
 
-                  <div className="whatchanged-grid">
-                    {result.state_change.deltas.map((item) => (
+                  <div className="deltas-grid">
+                    {result.state_change.deltas.map((delta) => (
                       <div
-                        key={item.name}
-                        className={`whatchanged-card impact-${item.impact.toLowerCase()}`}
+                        key={delta.name}
+                        className={`delta-card dir-${delta.direction.toLowerCase()} impact-${delta.impact.toLowerCase()}`}
                       >
-                        <div className="whatchanged-card-top">
-                          <span className="metric-name">{item.name}</span>
-                          <span className={`delta-pill delta-${item.impact.toLowerCase()}`}>
-                            {item.delta}
-                          </span>
+                        <div className="delta-card-top">
+                          <span className="delta-name">{delta.name}</span>
+                          <span className="delta-badge">{delta.delta}</span>
                         </div>
-                        <div className="whatchanged-values">
-                          <div>
-                            <span>PREVIOUS</span>
-                            <strong>{item.previous}</strong>
+                        <div className="delta-values-row">
+                          <div className="prev-val">
+                            <span>Prev</span>
+                            <strong>{delta.previous}</strong>
                           </div>
-                          <div className="value-arrow">→</div>
-                          <div>
-                            <span>CURRENT</span>
-                            <strong>{item.current}</strong>
+                          <span className="arrow-sep">→</span>
+                          <div className="curr-val">
+                            <span>Current</span>
+                            <strong>{delta.current}</strong>
                           </div>
                         </div>
                       </div>
@@ -843,53 +882,53 @@ function App() {
             <div className="scenarios-panel">
               <div className="scenarios-header">
                 <div>
-                  <div className="section-label">DECISION SCENARIOS</div>
-                  <h3>Scenario A / B / C Comparison</h3>
+                  <div className="section-label">SCENARIO MANAGEMENT</div>
+                  <h3>Compare & Save Decision Futures (A / B / C)</h3>
                 </div>
-                <div className="header-actions">
+                <div className="scenarios-header-actions">
                   <button
-                    className="futures-toggle-button active"
+                    className="futures-shortcut-btn"
                     onClick={async () => {
                       setShowCompareFutures(true)
                       setShowScenarios(false)
                       await fetchCompareFutures(scenarios)
                     }}
                   >
-                    <span className="futures-badge-icon">📊</span> Compare Futures Side-by-Side
+                    📊 View Future Comparison
                   </button>
                   <button className="close-why-btn" onClick={() => setShowScenarios(false)}>
-                    ✕ Close Scenarios
+                    ✕ Close View
                   </button>
                 </div>
               </div>
 
-              <div className="scenarios-grid">
+              <div className="scenario-slots-grid">
                 {(['A', 'B', 'C'] as ScenarioSlot[]).map((slot) => {
                   const sc = scenarios[slot]
                   const isActive = activeScenario === slot
-
                   return (
                     <div
                       key={slot}
-                      className={`scenario-card ${sc ? 'has-data' : 'empty'} ${isActive ? 'active-scenario' : ''}`}
+                      className={`scenario-slot-card ${sc ? 'has-data' : 'empty'} ${isActive ? 'is-active' : ''}`}
                     >
-                      <div className="scenario-card-header">
-                        <div className="scenario-title">
-                          <strong>SCENARIO {slot}</strong>
-                          {isActive && <span className="active-tag">ACTIVE</span>}
+                      <div className="slot-card-header">
+                        <div className="slot-title">
+                          <span className="slot-badge">SLOT {slot}</span>
+                          <h4>Scenario {slot}</h4>
                         </div>
-                        {sc && <span className="saved-time">{sc.savedAt}</span>}
+                        {isActive && <span className="active-tag">Active State</span>}
                       </div>
 
                       {!sc ? (
-                        <div className="empty-scenario-body">
-                          <p>No saved state in slot {slot}.</p>
+                        <div className="slot-empty-content">
+                          <p>No snapshot saved in Slot {slot}.</p>
                           <button className="save-scenario-btn" onClick={() => saveScenario(slot)}>
-                            Save Current State as {slot}
+                            Save Current Simulation as Scenario {slot}
                           </button>
                         </div>
                       ) : (
-                        <div className="saved-scenario-body">
+                        <div className="slot-data-content">
+                          <div className="saved-time">Saved at {sc.savedAt}</div>
                           <div className="scenario-input-strip">
                             <div>
                               <span>DEMAND</span>
@@ -1028,6 +1067,110 @@ function App() {
               )}
             </div>
           )}
+
+          {showExplanation && (
+            <div className="explanation-panel">
+              <div className="explanation-header">
+                <div>
+                  <div className="section-label">DECISIONTWIN INTELLIGENCE LAYER</div>
+                  <h3>Contextual Decision Explanation</h3>
+                </div>
+                <div className="explanation-header-badges">
+                  <span className="provider-badge">
+                    {explanation?.provider_used ?? 'Deterministic Engine Synthesizer'}
+                  </span>
+                  <span className="truth-badge">✓ Verified Engine Truth</span>
+                  <button className="close-why-btn" onClick={() => setShowExplanation(false)}>
+                    ✕ Close View
+                  </button>
+                </div>
+              </div>
+
+              {loadingExplanation ? (
+                <div className="explanation-loading">
+                  <span className="spinner" /> Synthesizing contextual explanation directly from simulation results...
+                </div>
+              ) : explanation ? (
+                <div className="explanation-content">
+                  <div className="explanation-pillars-grid">
+                    <div className="pillar-card pillar-what">
+                      <div className="pillar-title">📌 WHAT HAPPENED</div>
+                      <p>{explanation.what_happened}</p>
+                    </div>
+
+                    <div className="pillar-card pillar-why">
+                      <div className="pillar-title">🔍 WHY IT HAPPENED</div>
+                      <p>{explanation.why_it_happened}</p>
+                    </div>
+
+                    <div className="pillar-card pillar-driver">
+                      <div className="pillar-title">⚡ PRIMARY DRIVER</div>
+                      <p>{explanation.primary_driver}</p>
+                    </div>
+
+                    <div className="pillar-card pillar-consequence">
+                      <div className="pillar-title">⚠️ IMPORTANT CONSEQUENCE</div>
+                      <p>{explanation.important_consequence}</p>
+                    </div>
+
+                    <div className="pillar-card pillar-tradeoff">
+                      <div className="pillar-title">⚖️ RELEVANT TRADE-OFF</div>
+                      <p>{explanation.relevant_trade_off}</p>
+                    </div>
+                  </div>
+
+                  <div className="deterministic-facts-block">
+                    <div className="facts-header">
+                      <h4>📊 IMMUTABLE SIMULATION FACTS (ENGINE SOURCE OF TRUTH)</h4>
+                      <span className="facts-sub">Calculated directly by simulation formulas. Not AI-generated.</span>
+                    </div>
+                    <ul className="facts-list">
+                      {explanation.deterministic_facts.map((fact, idx) => (
+                        <li key={idx}>
+                          <span className="fact-bullet">•</span> {fact}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+
+                  <div className="evidence-trace-block">
+                    <div className="evidence-header">
+                      <h4>🧬 EVIDENCE & METRIC SOURCE TRACE</h4>
+                      <span className="evidence-sub">
+                        Every explanation insight references exact simulation variables and engine trace paths.
+                      </span>
+                    </div>
+                    <table className="evidence-table">
+                      <thead>
+                        <tr>
+                          <th>METRIC</th>
+                          <th>EXACT ENGINE VALUE</th>
+                          <th>SOURCE COMPONENT</th>
+                          <th>DESCRIPTION</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {explanation.evidence_trace.map((item, idx) => (
+                          <tr key={idx}>
+                            <td className="ev-metric">
+                              <strong>{item.metric_name}</strong>
+                            </td>
+                            <td>
+                              <code className="evidence-value">{item.exact_value}</code>
+                            </td>
+                            <td>
+                              <code className="evidence-source">{item.source_component}</code>
+                            </td>
+                            <td className="ev-desc">{item.description}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              ) : null}
+            </div>
+          )}
         </section>
       </section>
     </main>
@@ -1035,8 +1178,3 @@ function App() {
 }
 
 export default App
-
-
-
-
-

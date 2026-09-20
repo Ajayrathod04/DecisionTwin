@@ -1,8 +1,15 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.models.schemas import DecisionInput, FuturesComparisonResult, SimulationResult
+from app.models.schemas import (
+    DecisionExplanation,
+    DecisionInput,
+    ExplanationRequest,
+    FuturesComparisonResult,
+    SimulationResult,
+)
 from app.engine.simulation import compare_futures, simulate
+from app.services.explanation.explainer import generate_explanation
 
 app = FastAPI(title="DecisionTwin API", version="0.1.0")
 
@@ -32,3 +39,7 @@ def run_simulation(decision: DecisionInput) -> SimulationResult:
 def run_compare_futures(scenarios: dict) -> FuturesComparisonResult:
     return compare_futures(scenarios)
 
+
+@app.post("/explain", response_model=DecisionExplanation)
+def explain_decision(req: ExplanationRequest) -> DecisionExplanation:
+    return generate_explanation(req)
