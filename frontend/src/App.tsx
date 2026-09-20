@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 import {
   Background,
   Controls,
@@ -11,6 +11,8 @@ import {
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import './App.css'
+
+const API_BASE = 'http://decisiontwin-api.eba-pzpi4y9c.ap-south-1.elasticbeanstalk.com'
 
 type CausalStep = {
   step: number
@@ -120,6 +122,8 @@ type DecisionNodeProps = {
   value: string
   detail?: string
   status?: string
+  nodeType?: 'input' | 'dependency' | 'output'
+  riskLevel?: string
   isHighlighted?: boolean
   onWhyClick?: () => void
   showWhyButton?: boolean
@@ -130,25 +134,35 @@ function DecisionNode({
   value,
   detail,
   status,
+  nodeType = 'dependency',
+  riskLevel,
   isHighlighted,
   onWhyClick,
   showWhyButton,
 }: DecisionNodeProps) {
+  const typeClass = `node-${nodeType}`
+  const riskClass = riskLevel ? `risk-${riskLevel.toLowerCase()}` : ''
+
   return (
-    <div className={`decision-node ${isHighlighted ? 'highlighted-node' : ''}`}>
-      <Handle type="target" position={Position.Left} />
+    <div className={`decision-node ${typeClass} ${riskClass} ${isHighlighted ? 'highlighted-node' : ''}`}>
+      <Handle type="target" position={Position.Left} className="custom-handle" />
       <div className="node-header-row">
-        <div className="node-kicker">{status ?? 'MODEL'}</div>
+        <span className="node-kicker">{status ?? 'MODEL'}</span>
         {showWhyButton && (
-          <button className="node-why-btn" onClick={onWhyClick} title="Trace causal breakdown">
-            ? WHY?
+          <button
+            className="node-why-btn"
+            onClick={onWhyClick}
+            title="Trace causal breakdown"
+            aria-label="Trace causal breakdown"
+          >
+            Trace Why
           </button>
         )}
       </div>
       <div className="node-title">{title}</div>
       <div className="node-value">{value}</div>
       {detail && <div className="node-detail">{detail}</div>}
-      <Handle type="source" position={Position.Right} />
+      <Handle type="source" position={Position.Right} className="custom-handle" />
     </div>
   )
 }
@@ -260,12 +274,9 @@ function App() {
   const [result, setResult] = useState<SimulationResult>(initialResult)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
-  const [showWhy, setShowWhy] = useState(false)
-  const [showWhatIf, setShowWhatIf] = useState(false)
-  const [showWhatChanged, setShowWhatChanged] = useState(false)
-  const [showScenarios, setShowScenarios] = useState(false)
-  const [showCompareFutures, setShowCompareFutures] = useState(false)
-  const [showExplanation, setShowExplanation] = useState(false)
+  const [justSimulated, setJustSimulated] = useState(false)
+
+  const [activeTab, setActiveTab] = useState<'none' | 'why' | 'whatif' | 'whatchanged' | 'scenarios' | 'futures' | 'explanation'>('none')
 
   const [explanation, setExplanation] = useState<DecisionExplanation | null>(null)
   const [loadingExplanation, setLoadingExplanation] = useState(false)
@@ -283,7 +294,7 @@ function App() {
     setError('')
 
     try {
-      const response = await fetch('http://decisiontwin-api.eba-pzpi4y9c.ap-south-1.elasticbeanstalk.com/simulate', {
+      const response = await fetch(`${API_BASE}/simulate`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -302,8 +313,10 @@ function App() {
       const data = (await response.json()) as SimulationResult
       setResult(data)
       setExplanation(null)
+      setJustSimulated(true)
+      setTimeout(() => setJustSimulated(false), 800)
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unable to reach the simulation engine.')
+      setError(err instanceof Error ? err.message : 'Unable to reach the simulation engine API.')
     } finally {
       setLoading(false)
     }
@@ -311,7 +324,7 @@ function App() {
 
   async function fetchCompareFutures(activeScenarios: Record<ScenarioSlot, ScenarioSnapshot | null>) {
     try {
-      const response = await fetch('http://decisiontwin-api.eba-pzpi4y9c.ap-south-1.elasticbeanstalk.com/compare-futures', {
+      const response = await fetch(`${API_BASE}/compare-futures`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(activeScenarios),
@@ -326,11 +339,10 @@ function App() {
     }
   }
 
-  async function fetchExplanation() {
+  const fetchExplanation = useCallback(async () => {
     setLoadingExplanation(true)
-    setShowExplanation(true)
     try {
-      const response = await fetch('http://decisiontwin-api.eba-pzpi4y9c.ap-south-1.elasticbeanstalk.com/explain', {
+      const response = await fetch(`${API_BASE}/explain`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -353,7 +365,23 @@ function App() {
     } finally {
       setLoadingExplanation(false)
     }
-  }
+  }, [capacity, demand, inventory, leadTime, result, scenarios])
+
+  const toggleTab = useCallback(
+    (tab: 'why' | 'whatif' | 'whatchanged' | 'scenarios' | 'futures' | 'explanation') => {
+      if (activeTab === tab) {
+        setActiveTab('none')
+      } else {
+        setActiveTab(tab)
+        if (tab === 'futures') {
+          void fetchCompareFutures(scenarios)
+        } else if (tab === 'explanation' && !explanation) {
+          void fetchExplanation()
+        }
+      }
+    },
+    [activeTab, explanation, fetchExplanation, scenarios]
+  )
 
   function applyRecommendation(opt: CounterfactualOption) {
     if (opt.target_field === 'capacity') setCapacity(opt.recommended_value)
@@ -363,9 +391,14 @@ function App() {
   }
 
   function saveScenario(slot: ScenarioSlot) {
+    const defaultNames: Record<ScenarioSlot, string> = {
+      A: 'BASELINE',
+      B: 'HIGH DEMAND',
+      C: 'LOW CAPACITY',
+    }
     const newSnapshot: ScenarioSnapshot = {
       slot,
-      name: `Scenario ${slot}`,
+      name: defaultNames[slot],
       demand,
       inventory,
       capacity,
@@ -404,98 +437,144 @@ function App() {
       {
         id: 'input',
         type: 'decision',
-        position: { x: 40, y: 180 },
+        position: { x: 40, y: 160 },
         data: {
-          title: 'Decision',
+          title: 'Input Demand',
           value: `${demand} units`,
-          detail: `Demand  ${leadTime} day lead time`,
+          detail: `${leadTime} day lead time`,
           status: 'INPUT',
-          isHighlighted: showWhy,
+          nodeType: 'input',
+          isHighlighted: activeTab === 'why',
         },
       },
       {
         id: 'capacity',
         type: 'decision',
-        position: { x: 360, y: 80 },
+        position: { x: 340, y: 60 },
         data: {
-          title: 'Capacity',
+          title: 'Operating Capacity',
           value: `${capacity} units`,
           detail: `${Math.round(result.utilization * 100)}% utilization`,
           status: 'DEPENDENCY',
-          isHighlighted: showWhy,
+          nodeType: 'dependency',
+          isHighlighted: activeTab === 'why',
         },
       },
       {
         id: 'inventory',
         type: 'decision',
-        position: { x: 360, y: 280 },
+        position: { x: 340, y: 270 },
         data: {
-          title: 'Inventory',
+          title: 'Inventory Buffer',
           value: `${inventory} units`,
-          detail: `${result.projected_inventory} projected`,
+          detail: `${result.projected_inventory} units projected`,
           status: 'DEPENDENCY',
-          isHighlighted: showWhy,
+          nodeType: 'dependency',
+          isHighlighted: activeTab === 'why',
         },
       },
       {
         id: 'consequence',
         type: 'decision',
-        position: { x: 700, y: 180 },
+        position: { x: 670, y: 160 },
         data: {
-          title: 'Consequence',
+          title: 'System Consequence',
           value: `${result.delay_days} days`,
-          detail: `${result.risk} risk  $${result.cost.toLocaleString()}`,
+          detail: `${result.risk} Risk • $${result.cost.toLocaleString()}`,
           status: 'OUTPUT',
-          isHighlighted: showWhy,
+          nodeType: 'output',
+          riskLevel: result.risk,
+          isHighlighted: activeTab === 'why',
           showWhyButton: true,
-          onWhyClick: () => {
-            setShowWhy(true)
-            setShowWhatIf(false)
-            setShowWhatChanged(false)
-            setShowScenarios(false)
-            setShowCompareFutures(false)
-            setShowExplanation(false)
-          },
+          onWhyClick: () => toggleTab('why'),
         },
       },
     ],
-    [demand, inventory, capacity, leadTime, result, showWhy]
+    [demand, inventory, capacity, leadTime, result, activeTab, toggleTab]
   )
 
   const edges = useMemo<Edge[]>(
     () => [
-      { id: 'e-input-capacity', source: 'input', target: 'capacity', animated: true },
-      { id: 'e-input-inventory', source: 'input', target: 'inventory', animated: true },
-      { id: 'e-capacity-consequence', source: 'capacity', target: 'consequence', animated: true },
-      { id: 'e-inventory-consequence', source: 'inventory', target: 'consequence', animated: true },
+      {
+        id: 'e-input-capacity',
+        source: 'input',
+        target: 'capacity',
+        animated: justSimulated,
+        style: { stroke: '#38bdf8', strokeWidth: 1.5 },
+      },
+      {
+        id: 'e-input-inventory',
+        source: 'input',
+        target: 'inventory',
+        animated: justSimulated,
+        style: { stroke: '#38bdf8', strokeWidth: 1.5 },
+      },
+      {
+        id: 'e-capacity-consequence',
+        source: 'capacity',
+        target: 'consequence',
+        animated: justSimulated,
+        style: {
+          stroke: result.risk === 'HIGH' ? '#f85149' : result.risk === 'MEDIUM' ? '#d29922' : '#2ea043',
+          strokeWidth: 1.5,
+        },
+      },
+      {
+        id: 'e-inventory-consequence',
+        source: 'inventory',
+        target: 'consequence',
+        animated: justSimulated,
+        style: {
+          stroke: result.risk === 'HIGH' ? '#f85149' : result.risk === 'MEDIUM' ? '#d29922' : '#2ea043',
+          strokeWidth: 1.5,
+        },
+      },
     ],
-    []
+    [result.risk, justSimulated]
   )
 
   return (
     <main className="app-shell">
       <header className="topbar">
         <div>
-          <div className="eyebrow">DECISIONTWIN</div>
+          <div className="eyebrow">DECISIONTWIN / DECISION SIMULATION ENGINE</div>
           <h1>See the consequences before you commit.</h1>
           <p className="subtitle">
-            A deterministic decision simulation showing how one choice propagates through its dependencies.
+            A deterministic decision simulation instrument for modeling operational dependencies and risk propagation.
           </p>
         </div>
-        <div className="status-pill">
-          <span className="status-dot" />
-          Simulation engine online
+        <div className="status-pill" aria-label="AWS Elastic Beanstalk Live API Status">
+          <span className="live-dot" />
+          <span>AWS • LIVE API</span>
         </div>
       </header>
 
       <section className="workspace">
-        <aside className="control-panel">
+        <aside className="control-panel" aria-label="Decision Controls Console">
           <div className="section-label">DECISION INPUTS</div>
 
-          <label>
+          <div className="control-item">
             <div className="control-heading">
               <span>Demand</span>
-              <strong>{demand} units</strong>
+              <div className="control-val-group">
+                <button
+                  type="button"
+                  className="step-btn"
+                  onClick={() => setDemand((prev) => Math.max(20, prev - 5))}
+                  aria-label="Decrease demand"
+                >
+                  -
+                </button>
+                <strong>{demand} units</strong>
+                <button
+                  type="button"
+                  className="step-btn"
+                  onClick={() => setDemand((prev) => Math.min(200, prev + 5))}
+                  aria-label="Increase demand"
+                >
+                  +
+                </button>
+              </div>
             </div>
             <input
               type="range"
@@ -503,14 +582,36 @@ function App() {
               max="200"
               step="5"
               value={demand}
+              aria-label="Demand slider"
+              style={{
+                background: `linear-gradient(to right, #38bdf8 0%, #38bdf8 ${((demand - 20) / 180) * 100}%, #21262d ${((demand - 20) / 180) * 100}%, #21262d 100%)`,
+              }}
               onChange={(event) => setDemand(Number(event.target.value))}
             />
-          </label>
+          </div>
 
-          <label>
+          <div className="control-item">
             <div className="control-heading">
               <span>Inventory</span>
-              <strong>{inventory} units</strong>
+              <div className="control-val-group">
+                <button
+                  type="button"
+                  className="step-btn"
+                  onClick={() => setInventory((prev) => Math.max(0, prev - 5))}
+                  aria-label="Decrease inventory"
+                >
+                  -
+                </button>
+                <strong>{inventory} units</strong>
+                <button
+                  type="button"
+                  className="step-btn"
+                  onClick={() => setInventory((prev) => Math.min(200, prev + 5))}
+                  aria-label="Increase inventory"
+                >
+                  +
+                </button>
+              </div>
             </div>
             <input
               type="range"
@@ -518,14 +619,36 @@ function App() {
               max="200"
               step="5"
               value={inventory}
+              aria-label="Inventory slider"
+              style={{
+                background: `linear-gradient(to right, #38bdf8 0%, #38bdf8 ${(inventory / 200) * 100}%, #21262d ${(inventory / 200) * 100}%, #21262d 100%)`,
+              }}
               onChange={(event) => setInventory(Number(event.target.value))}
             />
-          </label>
+          </div>
 
-          <label>
+          <div className="control-item">
             <div className="control-heading">
               <span>Capacity</span>
-              <strong>{capacity} units</strong>
+              <div className="control-val-group">
+                <button
+                  type="button"
+                  className="step-btn"
+                  onClick={() => setCapacity((prev) => Math.max(20, prev - 5))}
+                  aria-label="Decrease capacity"
+                >
+                  -
+                </button>
+                <strong>{capacity} units</strong>
+                <button
+                  type="button"
+                  className="step-btn"
+                  onClick={() => setCapacity((prev) => Math.min(200, prev + 5))}
+                  aria-label="Increase capacity"
+                >
+                  +
+                </button>
+              </div>
             </div>
             <input
               type="range"
@@ -533,161 +656,158 @@ function App() {
               max="200"
               step="5"
               value={capacity}
+              aria-label="Capacity slider"
+              style={{
+                background: `linear-gradient(to right, #38bdf8 0%, #38bdf8 ${((capacity - 20) / 180) * 100}%, #21262d ${((capacity - 20) / 180) * 100}%, #21262d 100%)`,
+              }}
               onChange={(event) => setCapacity(Number(event.target.value))}
             />
-          </label>
+          </div>
 
-          <label>
+          <div className="control-item">
             <div className="control-heading">
               <span>Lead time</span>
-              <strong>{leadTime} days</strong>
+              <div className="control-val-group">
+                <button
+                  type="button"
+                  className="step-btn"
+                  onClick={() => setLeadTime((prev) => Math.max(1, prev - 1))}
+                  aria-label="Decrease lead time"
+                >
+                  -
+                </button>
+                <strong>{leadTime} days</strong>
+                <button
+                  type="button"
+                  className="step-btn"
+                  onClick={() => setLeadTime((prev) => Math.min(30, prev + 1))}
+                  aria-label="Increase lead time"
+                >
+                  +
+                </button>
+              </div>
             </div>
             <input
               type="range"
               min="1"
               max="30"
               value={leadTime}
+              aria-label="Lead time slider"
+              style={{
+                background: `linear-gradient(to right, #38bdf8 0%, #38bdf8 ${((leadTime - 1) / 29) * 100}%, #21262d ${((leadTime - 1) / 29) * 100}%, #21262d 100%)`,
+              }}
               onChange={(event) => setLeadTime(Number(event.target.value))}
             />
-          </label>
+          </div>
 
-          <button className="simulate-button" onClick={simulate} disabled={loading}>
-            {loading ? 'Simulating' : 'Run simulation'}
+          <button
+            className="simulate-button"
+            onClick={simulate}
+            disabled={loading}
+            aria-label="Run simulation"
+          >
+            {loading ? 'Simulating...' : 'Run simulation'}
           </button>
 
-          {error && <div className="error-box">{error}</div>}
+          {error && (
+            <div className="error-inline" role="alert">
+              <span>⚠️ {error}</span>
+              <button className="error-retry" onClick={simulate}>Retry</button>
+            </div>
+          )}
 
-          <div className="quick-scenario-section">
-            <div className="section-label">SAVE CURRENT SCENARIO</div>
-            <div className="scenario-quick-btn-grid">
+          <div className="quick-scenarios">
+            <div className="section-label">SAVE SCENARIOS</div>
+            <div className="slot-tabs">
               {(['A', 'B', 'C'] as ScenarioSlot[]).map((slot) => {
                 const sc = scenarios[slot]
                 const isActive = activeScenario === slot
                 return (
                   <button
                     key={slot}
-                    className={`quick-slot-btn ${sc ? 'has-data' : ''} ${isActive ? 'is-active' : ''}`}
+                    className={`slot-tab ${sc ? 'has-data' : ''} ${isActive ? 'is-active' : ''}`}
                     onClick={() => saveScenario(slot)}
-                    title={sc ? `Overwrite Scenario ${slot}` : `Save current state as Scenario ${slot}`}
+                    title={sc ? `Saved at ${sc.savedAt}` : `Save current state as Scenario ${slot}`}
+                    aria-label={`Save scenario ${slot}`}
                   >
-                    {sc ? `Save ${slot} ✓` : `Save ${slot}`}
+                    Slot {slot} {sc ? '✓' : ''}
                   </button>
                 )
               })}
             </div>
           </div>
 
-          <div className="model-note">
-            <span>DETERMINISTIC MODEL</span>
-            <p>
-              Results, causal traces, counterfactuals, deltas, futures & explanations derive from simulation logic.
-            </p>
+          <div className="console-footer">
+            <span>DETERMINISTIC SIMULATION</span>
+            <p>Propagation, causal traces, & futures computed directly by backend engine.</p>
           </div>
         </aside>
 
-        <section className="graph-panel">
-          <div className="graph-header">
-            <div>
-              <div className="section-label">CAUSAL MODEL</div>
-              <h2>Decision propagation</h2>
+        <section className="graph-room">
+          <div className="graph-topbar">
+            <div className="graph-title-block">
+              <span className="section-label">CAUSAL SYSTEM MAP</span>
+              <h2>Decision Room</h2>
             </div>
-            <div className="header-actions">
-              <button
-                className={`why-toggle-button ${showWhy ? 'active' : ''}`}
-                onClick={() => {
-                  setShowWhy((prev) => !prev)
-                  setShowWhatIf(false)
-                  setShowWhatChanged(false)
-                  setShowScenarios(false)
-                  setShowCompareFutures(false)
-                  setShowExplanation(false)
-                }}
-              >
-                <span className="why-badge-icon">?</span> WHY? Causal Trace
-              </button>
 
+            {/* Restrained Tab Bar Controls */}
+            <div className="analysis-tabs" role="tablist">
               <button
-                className={`whatif-toggle-button ${showWhatIf ? 'active' : ''}`}
-                onClick={() => {
-                  setShowWhatIf((prev) => !prev)
-                  setShowWhy(false)
-                  setShowWhatChanged(false)
-                  setShowScenarios(false)
-                  setShowCompareFutures(false)
-                  setShowExplanation(false)
-                }}
+                className={`tab-item ${activeTab === 'why' ? 'active' : ''}`}
+                onClick={() => toggleTab('why')}
+                role="tab"
+                aria-selected={activeTab === 'why'}
               >
-                <span className="whatif-badge-icon">⚡</span> WHAT IF? Counterfactuals
+                WHY? Trace
               </button>
-
               <button
-                className={`whatchanged-toggle-button ${showWhatChanged ? 'active' : ''}`}
-                onClick={() => {
-                  setShowWhatChanged((prev) => !prev)
-                  setShowWhy(false)
-                  setShowWhatIf(false)
-                  setShowScenarios(false)
-                  setShowCompareFutures(false)
-                  setShowExplanation(false)
-                }}
+                className={`tab-item ${activeTab === 'whatif' ? 'active' : ''}`}
+                onClick={() => toggleTab('whatif')}
+                role="tab"
+                aria-selected={activeTab === 'whatif'}
               >
-                <span className="whatchanged-badge-icon">Δ</span> WHAT CHANGED?
+                Counterfactuals
               </button>
-
               <button
-                className={`scenarios-toggle-button ${showScenarios ? 'active' : ''}`}
-                onClick={() => {
-                  setShowScenarios((prev) => !prev)
-                  setShowWhy(false)
-                  setShowWhatIf(false)
-                  setShowWhatChanged(false)
-                  setShowCompareFutures(false)
-                  setShowExplanation(false)
-                }}
+                className={`tab-item ${activeTab === 'whatchanged' ? 'active' : ''}`}
+                onClick={() => toggleTab('whatchanged')}
+                role="tab"
+                aria-selected={activeTab === 'whatchanged'}
               >
-                <span className="scenarios-badge-icon">🗂</span> SCENARIOS A/B/C
+                What Changed
               </button>
-
               <button
-                className={`futures-toggle-button ${showCompareFutures ? 'active' : ''}`}
-                onClick={async () => {
-                  setShowCompareFutures((prev) => !prev)
-                  setShowWhy(false)
-                  setShowWhatIf(false)
-                  setShowWhatChanged(false)
-                  setShowScenarios(false)
-                  setShowExplanation(false)
-                  await fetchCompareFutures(scenarios)
-                }}
+                className={`tab-item ${activeTab === 'scenarios' ? 'active' : ''}`}
+                onClick={() => toggleTab('scenarios')}
+                role="tab"
+                aria-selected={activeTab === 'scenarios'}
               >
-                <span className="futures-badge-icon">📊</span> COMPARE FUTURES
+                Scenarios
               </button>
-
               <button
-                className={`explanation-toggle-button ${showExplanation ? 'active' : ''}`}
-                onClick={() => {
-                  if (!showExplanation) {
-                    void fetchExplanation()
-                  } else {
-                    setShowExplanation(false)
-                  }
-                  setShowWhy(false)
-                  setShowWhatIf(false)
-                  setShowWhatChanged(false)
-                  setShowScenarios(false)
-                  setShowCompareFutures(false)
-                }}
+                className={`tab-item ${activeTab === 'futures' ? 'active' : ''}`}
+                onClick={() => toggleTab('futures')}
+                role="tab"
+                aria-selected={activeTab === 'futures'}
               >
-                <span className="explanation-badge-icon">🧠</span> AI EXPLANATION
+                Compare Futures
               </button>
+              <button
+                className={`tab-item ${activeTab === 'explanation' ? 'active' : ''}`}
+                onClick={() => toggleTab('explanation')}
+                role="tab"
+                aria-selected={activeTab === 'explanation'}
+              >
+                Context Explanation
+              </button>
+            </div>
 
-              <div className={`risk-badge risk-${result.risk.toLowerCase()}`}>
-                {result.risk} RISK
-              </div>
+            <div className={`risk-tag risk-${result.risk.toLowerCase()}`}>
+              {result.risk} RISK
             </div>
           </div>
 
-          <div className="graph">
+          <div className={`graph-container ${justSimulated ? 'state-pulse' : ''}`}>
             <ReactFlow
               nodes={nodes}
               edges={edges}
@@ -698,6 +818,8 @@ function App() {
                     value={String(data.value)}
                     detail={String(data.detail)}
                     status={String(data.status)}
+                    nodeType={data.nodeType as 'input' | 'dependency' | 'output' | undefined}
+                    riskLevel={data.riskLevel as string | undefined}
                     isHighlighted={Boolean(data.isHighlighted)}
                     showWhyButton={Boolean(data.showWhyButton)}
                     onWhyClick={data.onWhyClick as (() => void) | undefined}
@@ -709,114 +831,110 @@ function App() {
               nodesConnectable={false}
               elementsSelectable={false}
             >
-              <Background />
-              <MiniMap />
+              <Background color="#21262d" gap={24} size={1} />
+              <MiniMap style={{ background: '#0d1117' }} nodeColor="#30363d" />
               <Controls />
             </ReactFlow>
           </div>
 
-          <div className="result-strip">
-            <div>
-              <span>PROJECTED INVENTORY</span>
-              <strong>{result.projected_inventory}</strong>
+          <div className="metric-strip">
+            <div className="metric-item">
+              <span className="metric-lbl">PROJECTED INVENTORY</span>
+              <strong className="metric-val">{result.projected_inventory} units</strong>
             </div>
-            <div>
-              <span>UTILIZATION</span>
-              <strong>{Math.round(result.utilization * 100)}%</strong>
+            <div className="metric-item">
+              <span className="metric-lbl">UTILIZATION</span>
+              <strong className="metric-val">{Math.round(result.utilization * 100)}%</strong>
             </div>
-            <div>
-              <span>DELAY</span>
-              <strong>{result.delay_days} days</strong>
+            <div className="metric-item">
+              <span className="metric-lbl">QUEUE DELAY</span>
+              <strong className="metric-val">{result.delay_days} days</strong>
             </div>
-            <div>
-              <span>EST. COST</span>
-              <strong>${result.cost.toLocaleString()}</strong>
+            <div className="metric-item">
+              <span className="metric-lbl">ESTIMATED COST</span>
+              <strong className="metric-val">${result.cost.toLocaleString()}</strong>
             </div>
-            <div>
-              <span>BOTTLENECK</span>
-              <strong>{result.bottleneck ?? 'None'}</strong>
+            <div className="metric-item">
+              <span className="metric-lbl">BOTTLENECK</span>
+              <strong className={`metric-val ${result.bottleneck ? 'is-bottleneck' : ''}`}>
+                {result.bottleneck ? result.bottleneck.toUpperCase() : 'NONE'}
+              </strong>
             </div>
           </div>
 
-          {showWhy && (
-            <div className="causal-trace-panel">
-              <div className="causal-trace-header">
+          {/* Analysis Panels visually integrated below graph */}
+          {activeTab === 'why' && (
+            <div className="analysis-panel">
+              <div className="panel-header">
                 <div>
-                  <div className="section-label">CAUSAL EXPLANATION</div>
+                  <span className="section-label">CAUSAL BREAKDOWN</span>
                   <h3>Why did this outcome occur?</h3>
                 </div>
-                <button className="close-why-btn" onClick={() => setShowWhy(false)}>
-                  ✕ Close View
-                </button>
+                <button className="panel-close-btn" onClick={() => setActiveTab('none')}>✕ Close</button>
               </div>
 
-              <div className="causal-summary-card">
-                <div className="causal-summary-label">ENGINE CAUSAL SUMMARY</div>
+              <div className="narrative-block">
+                <span className="block-label">ENGINE SUMMARY</span>
                 <p>{result.causal_summary}</p>
               </div>
 
-              <div className="causal-chain-grid">
+              <div className="causal-steps-list">
                 {result.causal_chain.map((step) => (
-                  <div key={step.step} className={`causal-step-card trend-${step.trend.toLowerCase()}`}>
-                    <div className="step-badge">
-                      <span className="step-num">0{step.step}</span>
-                      <span className="step-symbol">{step.symbol}</span>
-                    </div>
-                    <div className="step-label">{step.label}</div>
-                    <div className="step-value">{step.value}</div>
-                    <div className="step-detail">{step.detail}</div>
+                  <div key={step.step} className={`step-row trend-${step.trend.toLowerCase()}`}>
+                    <span className="step-num">0{step.step}</span>
+                    <span className="step-lbl">{step.label}</span>
+                    <span className="step-val">{step.value}</span>
+                    <span className="step-desc">{step.detail}</span>
                   </div>
                 ))}
               </div>
             </div>
           )}
 
-          {showWhatIf && (
-            <div className="whatif-panel">
-              <div className="whatif-header">
+          {activeTab === 'whatif' && (
+            <div className="analysis-panel">
+              <div className="panel-header">
                 <div>
-                  <div className="section-label">COUNTERFACTUAL ANALYSIS</div>
+                  <span className="section-label">COUNTERFACTUAL OPTIONS</span>
                   <h3>What if you made a different decision?</h3>
                 </div>
-                <button className="close-why-btn" onClick={() => setShowWhatIf(false)}>
-                  ✕ Close View
-                </button>
+                <button className="panel-close-btn" onClick={() => setActiveTab('none')}>✕ Close</button>
               </div>
 
-              <div className="counterfactual-cards-grid">
+              <div className="options-grid">
                 {result.counterfactuals.map((opt) => (
-                  <div key={opt.id} className="counterfactual-card">
-                    <div className="cf-card-header">
-                      <div className="cf-title">{opt.title}</div>
-                      <span className={`risk-badge risk-${opt.projected_risk.toLowerCase()}`}>
+                  <div key={opt.id} className="option-card">
+                    <div className="option-top">
+                      <strong className="option-title">{opt.title}</strong>
+                      <span className={`risk-tag risk-${opt.projected_risk.toLowerCase()}`}>
                         {opt.projected_risk} RISK
                       </span>
                     </div>
 
-                    <div className="cf-action">{opt.action}</div>
-                    <div className="cf-impact">{opt.impact_summary}</div>
+                    <div className="option-action">{opt.action}</div>
+                    <p className="option-desc">{opt.impact_summary}</p>
 
-                    <div className="cf-metrics-grid">
+                    <div className="option-metrics">
                       <div>
                         <span>UTILIZATION</span>
                         <strong>{Math.round(opt.projected_utilization * 100)}%</strong>
                       </div>
                       <div>
                         <span>DELAY</span>
-                        <strong>{opt.projected_delay_days} days</strong>
+                        <strong>{opt.projected_delay_days}d</strong>
                       </div>
                       <div>
-                        <span>EST. COST</span>
+                        <span>COST</span>
                         <strong>${opt.projected_cost.toLocaleString()}</strong>
                       </div>
                     </div>
 
                     {opt.delta !== 0 && (
                       <button
-                        className="apply-recommendation-btn"
+                        className="apply-btn"
                         onClick={() => applyRecommendation(opt)}
                       >
-                        Apply Decision ({opt.delta > 0 ? `+${opt.delta}` : opt.delta})
+                        Apply Choice ({opt.delta > 0 ? `+${opt.delta}` : opt.delta})
                       </button>
                     )}
                   </div>
@@ -825,51 +943,35 @@ function App() {
             </div>
           )}
 
-          {showWhatChanged && (
-            <div className="whatchanged-panel">
-              <div className="whatchanged-header">
+          {activeTab === 'whatchanged' && (
+            <div className="analysis-panel">
+              <div className="panel-header">
                 <div>
-                  <div className="section-label">STATE CHANGE COMPARISON</div>
+                  <span className="section-label">STATE CHANGE COMPARISON</span>
                   <h3>What changed since the last simulation?</h3>
                 </div>
-                <button className="close-why-btn" onClick={() => setShowWhatChanged(false)}>
-                  ✕ Close View
-                </button>
+                <button className="panel-close-btn" onClick={() => setActiveTab('none')}>✕ Close</button>
               </div>
 
               {!result.state_change.has_previous ? (
-                <div className="whatchanged-empty-card">
-                  <div className="empty-title">INITIAL BASELINE SIMULATION</div>
-                  <p>{result.state_change.summary}</p>
+                <div className="panel-empty-state">
+                  <p>Baseline simulation established. Modify inputs and run simulation again to compare deltas.</p>
                 </div>
               ) : (
                 <>
-                  <div className="whatchanged-summary-card">
-                    <div className="summary-badge">DELTA HIGHLIGHTS</div>
+                  <div className="narrative-block">
+                    <span className="block-label">STATE DELTAS</span>
                     <p>{result.state_change.summary}</p>
                   </div>
 
-                  <div className="deltas-grid">
-                    {result.state_change.deltas.map((delta) => (
-                      <div
-                        key={delta.name}
-                        className={`delta-card dir-${delta.direction.toLowerCase()} impact-${delta.impact.toLowerCase()}`}
-                      >
-                        <div className="delta-card-top">
-                          <span className="delta-name">{delta.name}</span>
-                          <span className="delta-badge">{delta.delta}</span>
-                        </div>
-                        <div className="delta-values-row">
-                          <div className="prev-val">
-                            <span>Prev</span>
-                            <strong>{delta.previous}</strong>
-                          </div>
-                          <span className="arrow-sep">→</span>
-                          <div className="curr-val">
-                            <span>Current</span>
-                            <strong>{delta.current}</strong>
-                          </div>
-                        </div>
+                  <div className="deltas-list">
+                    {result.state_change.deltas.map((d) => (
+                      <div key={d.name} className="delta-row">
+                        <span className="d-name">{d.name}</span>
+                        <span className="d-prev">{d.previous}</span>
+                        <span className="d-arrow">→</span>
+                        <span className="d-curr">{d.current}</span>
+                        <span className={`d-diff ${d.direction.toLowerCase()}`}>{d.delta}</span>
                       </div>
                     ))}
                   </div>
@@ -878,118 +980,48 @@ function App() {
             </div>
           )}
 
-          {showScenarios && (
-            <div className="scenarios-panel">
-              <div className="scenarios-header">
+          {activeTab === 'scenarios' && (
+            <div className="analysis-panel">
+              <div className="panel-header">
                 <div>
-                  <div className="section-label">SCENARIO MANAGEMENT</div>
-                  <h3>Compare & Save Decision Futures (A / B / C)</h3>
+                  <span className="section-label">SAVED FUTURE SCENARIOS</span>
+                  <h3>Scenario Management (A / B / C)</h3>
                 </div>
-                <div className="scenarios-header-actions">
-                  <button
-                    className="futures-shortcut-btn"
-                    onClick={async () => {
-                      setShowCompareFutures(true)
-                      setShowScenarios(false)
-                      await fetchCompareFutures(scenarios)
-                    }}
-                  >
-                    📊 View Future Comparison
-                  </button>
-                  <button className="close-why-btn" onClick={() => setShowScenarios(false)}>
-                    ✕ Close View
-                  </button>
-                </div>
+                <button className="panel-close-btn" onClick={() => setActiveTab('none')}>✕ Close</button>
               </div>
 
-              <div className="scenario-slots-grid">
+              <div className="scenarios-compact-list">
                 {(['A', 'B', 'C'] as ScenarioSlot[]).map((slot) => {
                   const sc = scenarios[slot]
                   const isActive = activeScenario === slot
                   return (
-                    <div
-                      key={slot}
-                      className={`scenario-slot-card ${sc ? 'has-data' : 'empty'} ${isActive ? 'is-active' : ''}`}
-                    >
-                      <div className="slot-card-header">
-                        <div className="slot-title">
-                          <span className="slot-badge">SLOT {slot}</span>
-                          <h4>Scenario {slot}</h4>
-                        </div>
-                        {isActive && <span className="active-tag">Active State</span>}
+                    <div key={slot} className={`scenario-row ${isActive ? 'is-active' : ''}`}>
+                      <div className="sc-info">
+                        <strong>SLOT {slot}</strong>
+                        <span>{sc ? sc.name : 'EMPTY'}</span>
                       </div>
-
-                      {!sc ? (
-                        <div className="slot-empty-content">
-                          <p>No snapshot saved in Slot {slot}.</p>
-                          <button className="save-scenario-btn" onClick={() => saveScenario(slot)}>
-                            Save Current Simulation as Scenario {slot}
-                          </button>
+                      {sc ? (
+                        <div className="sc-metrics">
+                          <span>Demand: {sc.demand}</span>
+                          <span>Cap: {sc.capacity}</span>
+                          <span>Delay: {sc.result.delay_days}d</span>
+                          <span>Cost: ${sc.result.cost.toLocaleString()}</span>
+                          <span className={`risk-tag risk-${sc.result.risk.toLowerCase()}`}>{sc.result.risk}</span>
                         </div>
                       ) : (
-                        <div className="slot-data-content">
-                          <div className="saved-time">Saved at {sc.savedAt}</div>
-                          <div className="scenario-input-strip">
-                            <div>
-                              <span>DEMAND</span>
-                              <strong>{sc.demand}</strong>
-                            </div>
-                            <div>
-                              <span>CAPACITY</span>
-                              <strong>{sc.capacity}</strong>
-                            </div>
-                            <div>
-                              <span>INVENTORY</span>
-                              <strong>{sc.inventory}</strong>
-                            </div>
-                            <div>
-                              <span>LEAD TIME</span>
-                              <strong>{sc.lead_time}d</strong>
-                            </div>
-                          </div>
-
-                          <div className="scenario-outcome-strip">
-                            <div>
-                              <span>RISK</span>
-                              <span className={`risk-badge risk-${sc.result.risk.toLowerCase()}`}>
-                                {sc.result.risk}
-                              </span>
-                            </div>
-                            <div>
-                              <span>UTILIZATION</span>
-                              <strong>{Math.round(sc.result.utilization * 100)}%</strong>
-                            </div>
-                            <div>
-                              <span>DELAY</span>
-                              <strong>{sc.result.delay_days}d</strong>
-                            </div>
-                            <div>
-                              <span>COST</span>
-                              <strong>${sc.result.cost.toLocaleString()}</strong>
-                            </div>
-                          </div>
-
-                          <div className="scenario-actions">
-                            <button className="load-scenario-btn" onClick={() => loadScenario(slot)}>
-                              Load Scenario {slot}
-                            </button>
-                            <button
-                              className="overwrite-scenario-btn"
-                              onClick={() => saveScenario(slot)}
-                              title="Overwrite with current state"
-                            >
-                              Overwrite
-                            </button>
-                            <button
-                              className="clear-scenario-btn"
-                              onClick={() => clearScenario(slot)}
-                              title="Clear scenario"
-                            >
-                              Clear
-                            </button>
-                          </div>
-                        </div>
+                        <span className="sc-empty-lbl">No state saved in Slot {slot}</span>
                       )}
+                      <div className="sc-actions">
+                        {sc ? (
+                          <>
+                            <button className="sc-btn" onClick={() => loadScenario(slot)}>Load</button>
+                            <button className="sc-btn" onClick={() => saveScenario(slot)}>Overwrite</button>
+                            <button className="sc-btn sc-del" onClick={() => clearScenario(slot)}>Clear</button>
+                          </>
+                        ) : (
+                          <button className="sc-btn" onClick={() => saveScenario(slot)}>Save Current</button>
+                        )}
+                      </div>
                     </div>
                   )
                 })}
@@ -997,66 +1029,53 @@ function App() {
             </div>
           )}
 
-          {showCompareFutures && (
-            <div className="futures-panel">
-              <div className="futures-header">
+          {activeTab === 'futures' && (
+            <div className="analysis-panel">
+              <div className="panel-header">
                 <div>
-                  <div className="section-label">FACTUAL TRADEOFF MATRIX</div>
+                  <span className="section-label">FACTUAL TRADEOFF MATRIX</span>
                   <h3>Side-by-Side Future Comparison</h3>
                 </div>
-                <button className="close-why-btn" onClick={() => setShowCompareFutures(false)}>
-                  ✕ Close View
-                </button>
+                <button className="panel-close-btn" onClick={() => setActiveTab('none')}>✕ Close</button>
               </div>
 
               {!futuresComparison || futuresComparison.active_slots.length < 2 ? (
-                <div className="futures-empty-card">
-                  <div className="empty-title">SCENARIO COMPARISON REQUIRES AT LEAST 2 SAVED SCENARIOS</div>
-                  <p>
-                    Save at least 2 scenarios (e.g. <strong>Scenario A</strong> and <strong>Scenario B</strong>) using the <strong>Save A / B / C</strong> buttons to generate a side-by-side factual trade-off matrix.
-                  </p>
+                <div className="panel-empty-state">
+                  <p>Save at least 2 scenarios (e.g. Slot A and Slot B) using the control console to compare trade-offs side-by-side.</p>
                 </div>
               ) : (
                 <>
-                  <div className="futures-summary-card">
-                    <div className="summary-badge">DETERMINISTIC TRADEOFF SUMMARY</div>
+                  <div className="narrative-block">
+                    <span className="block-label">TRADEOFF SUMMARY</span>
                     <p>{futuresComparison.summary}</p>
                   </div>
 
-                  <div className="futures-matrix-container">
-                    <table className="futures-matrix-table">
+                  <div className="matrix-table-wrapper">
+                    <table className="matrix-table">
                       <thead>
                         <tr>
                           <th>METRIC</th>
                           <th>SCENARIO A</th>
-                          <th>SCENARIO B {futuresComparison.active_slots.includes('B') && <span className="diff-tag">(Diff vs A)</span>}</th>
-                          <th>SCENARIO C {futuresComparison.active_slots.includes('C') && <span className="diff-tag">(Diff vs A)</span>}</th>
+                          <th>SCENARIO B</th>
+                          <th>SCENARIO C</th>
                         </tr>
                       </thead>
                       <tbody>
                         {futuresComparison.rows.map((row) => (
                           <tr key={row.name}>
-                            <td className="row-name">{row.name}</td>
-                            <td className="row-val-a">{row.val_a ?? '-'}</td>
-                            <td className="row-val-b">
-                              <div className="cell-flex">
-                                <span>{row.val_b ?? '-'}</span>
-                                {row.diff_b_vs_a && row.diff_b_vs_a !== '-' && row.diff_b_vs_a !== '=' && (
-                                  <span className={`diff-pill ${row.diff_b_vs_a.startsWith('+') ? 'diff-up' : 'diff-down'}`}>
-                                    {row.diff_b_vs_a}
-                                  </span>
-                                )}
-                              </div>
+                            <td className="m-name">{row.name}</td>
+                            <td>{row.val_a ?? '-'}</td>
+                            <td>
+                              {row.val_b ?? '-'}
+                              {row.diff_b_vs_a && row.diff_b_vs_a !== '-' && row.diff_b_vs_a !== '=' && (
+                                <span className="m-diff">{row.diff_b_vs_a}</span>
+                              )}
                             </td>
-                            <td className="row-val-c">
-                              <div className="cell-flex">
-                                <span>{row.val_c ?? '-'}</span>
-                                {row.diff_c_vs_a && row.diff_c_vs_a !== '-' && row.diff_c_vs_a !== '=' && (
-                                  <span className={`diff-pill ${row.diff_c_vs_a.startsWith('+') ? 'diff-up' : 'diff-down'}`}>
-                                    {row.diff_c_vs_a}
-                                  </span>
-                                )}
-                              </div>
+                            <td>
+                              {row.val_c ?? '-'}
+                              {row.diff_c_vs_a && row.diff_c_vs_a !== '-' && row.diff_c_vs_a !== '=' && (
+                                <span className="m-diff">{row.diff_c_vs_a}</span>
+                              )}
                             </td>
                           </tr>
                         ))}
@@ -1068,104 +1087,54 @@ function App() {
             </div>
           )}
 
-          {showExplanation && (
-            <div className="explanation-panel">
-              <div className="explanation-header">
+          {activeTab === 'explanation' && (
+            <div className="analysis-panel">
+              <div className="panel-header">
                 <div>
-                  <div className="section-label">DECISIONTWIN INTELLIGENCE LAYER</div>
-                  <h3>Contextual Decision Explanation</h3>
+                  <span className="section-label">SYSTEM CONTEXT EXPLANATION</span>
+                  <h3>Deterministic Decision Explanation</h3>
                 </div>
-                <div className="explanation-header-badges">
-                  <span className="provider-badge">
-                    {explanation?.provider_used ?? 'Deterministic Engine Synthesizer'}
-                  </span>
-                  <span className="truth-badge">✓ Verified Engine Truth</span>
-                  <button className="close-why-btn" onClick={() => setShowExplanation(false)}>
-                    ✕ Close View
-                  </button>
-                </div>
+                <button className="panel-close-btn" onClick={() => setActiveTab('none')}>✕ Close</button>
               </div>
 
               {loadingExplanation ? (
-                <div className="explanation-loading">
-                  <span className="spinner" /> Synthesizing contextual explanation directly from simulation results...
-                </div>
+                <div className="panel-loading">Synthesizing engine context...</div>
               ) : explanation ? (
-                <div className="explanation-content">
-                  <div className="explanation-pillars-grid">
-                    <div className="pillar-card pillar-what">
-                      <div className="pillar-title">📌 WHAT HAPPENED</div>
+                <div className="explanation-layout">
+                  <div className="causal-hierarchy">
+                    <div className="c-section">
+                      <span className="c-label">WHAT CHANGED / WHAT HAPPENED</span>
                       <p>{explanation.what_happened}</p>
                     </div>
 
-                    <div className="pillar-card pillar-why">
-                      <div className="pillar-title">🔍 WHY IT HAPPENED</div>
+                    <div className="c-section">
+                      <span className="c-label">WHY IT CHANGED</span>
                       <p>{explanation.why_it_happened}</p>
                     </div>
 
-                    <div className="pillar-card pillar-driver">
-                      <div className="pillar-title">⚡ PRIMARY DRIVER</div>
+                    <div className="c-section">
+                      <span className="c-label">PRIMARY SYSTEM DRIVER</span>
                       <p>{explanation.primary_driver}</p>
                     </div>
 
-                    <div className="pillar-card pillar-consequence">
-                      <div className="pillar-title">⚠️ IMPORTANT CONSEQUENCE</div>
+                    <div className="c-section">
+                      <span className="c-label">DOWNSTREAM EFFECTS & CONSEQUENCES</span>
                       <p>{explanation.important_consequence}</p>
                     </div>
 
-                    <div className="pillar-card pillar-tradeoff">
-                      <div className="pillar-title">⚖️ RELEVANT TRADE-OFF</div>
+                    <div className="c-section">
+                      <span className="c-label">RELEVANT TRADE-OFF</span>
                       <p>{explanation.relevant_trade_off}</p>
                     </div>
                   </div>
 
-                  <div className="deterministic-facts-block">
-                    <div className="facts-header">
-                      <h4>📊 IMMUTABLE SIMULATION FACTS (ENGINE SOURCE OF TRUTH)</h4>
-                      <span className="facts-sub">Calculated directly by simulation formulas. Not AI-generated.</span>
-                    </div>
-                    <ul className="facts-list">
+                  <div className="facts-box">
+                    <span className="block-label">ENGINE IMMUTABLE FACTS</span>
+                    <ul>
                       {explanation.deterministic_facts.map((fact, idx) => (
-                        <li key={idx}>
-                          <span className="fact-bullet">•</span> {fact}
-                        </li>
+                        <li key={idx}>{fact}</li>
                       ))}
                     </ul>
-                  </div>
-
-                  <div className="evidence-trace-block">
-                    <div className="evidence-header">
-                      <h4>🧬 EVIDENCE & METRIC SOURCE TRACE</h4>
-                      <span className="evidence-sub">
-                        Every explanation insight references exact simulation variables and engine trace paths.
-                      </span>
-                    </div>
-                    <table className="evidence-table">
-                      <thead>
-                        <tr>
-                          <th>METRIC</th>
-                          <th>EXACT ENGINE VALUE</th>
-                          <th>SOURCE COMPONENT</th>
-                          <th>DESCRIPTION</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {explanation.evidence_trace.map((item, idx) => (
-                          <tr key={idx}>
-                            <td className="ev-metric">
-                              <strong>{item.metric_name}</strong>
-                            </td>
-                            <td>
-                              <code className="evidence-value">{item.exact_value}</code>
-                            </td>
-                            <td>
-                              <code className="evidence-source">{item.source_component}</code>
-                            </td>
-                            <td className="ev-desc">{item.description}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
                   </div>
                 </div>
               ) : null}
