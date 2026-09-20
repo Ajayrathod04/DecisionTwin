@@ -283,7 +283,7 @@ function App() {
     setError('')
 
     try {
-      const response = await fetch('http://127.0.0.1:8000/simulate', {
+      const response = await fetch('http://decisiontwin-api.eba-pzpi4y9c.ap-south-1.elasticbeanstalk.com/simulate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -311,7 +311,7 @@ function App() {
 
   async function fetchCompareFutures(activeScenarios: Record<ScenarioSlot, ScenarioSnapshot | null>) {
     try {
-      const response = await fetch('http://127.0.0.1:8000/compare-futures', {
+      const response = await fetch('http://decisiontwin-api.eba-pzpi4y9c.ap-south-1.elasticbeanstalk.com/compare-futures', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(activeScenarios),
@@ -330,7 +330,7 @@ function App() {
     setLoadingExplanation(true)
     setShowExplanation(true)
     try {
-      const response = await fetch('http://127.0.0.1:8000/explain', {
+      const response = await fetch('http://decisiontwin-api.eba-pzpi4y9c.ap-south-1.elasticbeanstalk.com/explain', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
