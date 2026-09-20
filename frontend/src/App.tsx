@@ -14,6 +14,7 @@ import './App.css'
 
 const API_BASE = 'http://decisiontwin-api.eba-pzpi4y9c.ap-south-1.elasticbeanstalk.com'
 
+// Types
 type CausalStep = {
   step: number
   label: string
@@ -125,8 +126,10 @@ type DecisionNodeProps = {
   nodeType?: 'input' | 'dependency' | 'output'
   riskLevel?: string
   isHighlighted?: boolean
+  isDimmed?: boolean
   onWhyClick?: () => void
   showWhyButton?: boolean
+  stepActive?: boolean
 }
 
 function DecisionNode({
@@ -137,14 +140,20 @@ function DecisionNode({
   nodeType = 'dependency',
   riskLevel,
   isHighlighted,
+  isDimmed,
   onWhyClick,
   showWhyButton,
+  stepActive,
 }: DecisionNodeProps) {
   const typeClass = `node-${nodeType}`
   const riskClass = riskLevel ? `risk-${riskLevel.toLowerCase()}` : ''
 
   return (
-    <div className={`decision-node ${typeClass} ${riskClass} ${isHighlighted ? 'highlighted-node' : ''}`}>
+    <div
+      className={`decision-node ${typeClass} ${riskClass} ${isHighlighted ? 'highlighted-node' : ''} ${
+        isDimmed ? 'dimmed-node' : ''
+      } ${stepActive ? 'step-active-node' : ''}`}
+    >
       <Handle type="target" position={Position.Left} className="custom-handle" />
       <div className="node-header-row">
         <span className="node-kicker">{status ?? 'MODEL'}</span>
@@ -155,7 +164,7 @@ function DecisionNode({
             title="Trace causal breakdown"
             aria-label="Trace causal breakdown"
           >
-            Trace Why
+            WHY? TRACE
           </button>
         )}
       </div>
@@ -167,18 +176,58 @@ function DecisionNode({
   )
 }
 
+// Geometric Brand Logo: Branching path symbol [Decision -> Future A / Future B -> Outcome]
 function BrandLogo() {
   return (
-    <div className="brand-logo" aria-label="DecisionTwin Logo">
-      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" className="logo-svg">
-        <circle cx="6" cy="12" r="4" stroke="#38bdf8" strokeWidth="2.5" />
-        <circle cx="18" cy="12" r="4" stroke="#38bdf8" strokeWidth="2.5" />
-        <path d="M10 12H14" stroke="#38bdf8" strokeWidth="2.5" strokeDasharray="2 2" />
+    <div className="brand-logo" aria-label="DecisionTwin Brand Identity">
+      <svg width="26" height="26" viewBox="0 0 26 26" fill="none" className="brand-logo-svg">
+        <circle cx="4" cy="13" r="3" fill="#38bdf8" />
+        <path d="M7 13 C 11 13, 12 6, 16 6" stroke="#38bdf8" strokeWidth="2" fill="none" />
+        <path d="M7 13 C 11 13, 12 20, 16 20" stroke="#38bdf8" strokeWidth="2" fill="none" />
+        <circle cx="17" cy="6" r="2.5" stroke="#38bdf8" strokeWidth="1.5" />
+        <circle cx="17" cy="20" r="2.5" stroke="#38bdf8" strokeWidth="1.5" />
+        <path d="M19.5 6 C 22 6, 22 13, 24 13" stroke="#38bdf8" strokeWidth="1.5" strokeDasharray="2 2" fill="none" />
+        <path d="M19.5 20 C 22 20, 22 13, 24 13" stroke="#38bdf8" strokeWidth="1.5" strokeDasharray="2 2" fill="none" />
       </svg>
       <span className="logo-text">
         <strong>DECISION</strong>TWIN
       </span>
     </div>
+  )
+}
+
+// Dedicated Module Marks
+function ModuleMark({ module }: { module: '01' | '02' | '03' | '04' }) {
+  if (module === '01') {
+    return (
+      <svg width="18" height="18" viewBox="0 0 20 20" fill="none" className="mod-mark-svg">
+        <circle cx="4" cy="10" r="2" fill="#38bdf8" />
+        <path d="M6 10H14" stroke="#38bdf8" strokeWidth="1.5" />
+        <circle cx="16" cy="10" r="2" fill="#38bdf8" />
+      </svg>
+    )
+  }
+  if (module === '02') {
+    return (
+      <svg width="18" height="18" viewBox="0 0 20 20" fill="none" className="mod-mark-svg">
+        <path d="M3 16L9 10L13 13L17 5" stroke="#38bdf8" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+        <circle cx="17" cy="5" r="2" fill="#38bdf8" />
+      </svg>
+    )
+  }
+  if (module === '03') {
+    return (
+      <svg width="18" height="18" viewBox="0 0 20 20" fill="none" className="mod-mark-svg">
+        <rect x="4" y="3" width="12" height="14" rx="2" stroke="#38bdf8" strokeWidth="1.5" />
+        <path d="M7 8H13M7 11H11" stroke="#38bdf8" strokeWidth="1.5" strokeLinecap="round" />
+      </svg>
+    )
+  }
+  return (
+    <svg width="18" height="18" viewBox="0 0 20 20" fill="none" className="mod-mark-svg">
+      <circle cx="9" cy="9" r="5" stroke="#38bdf8" strokeWidth="1.5" />
+      <path d="M13 13L17 17" stroke="#38bdf8" strokeWidth="1.5" strokeLinecap="round" />
+    </svg>
   )
 }
 
@@ -281,8 +330,25 @@ const initialResult: SimulationResult = {
   },
 }
 
-function App() {
+export function App() {
+  // Preloader State (~1.4s)
+  const [isPreloading, setIsPreloading] = useState(true)
+
+  // Pointer Proximity / Spatial Parallax State
+  const [mousePos, setMousePos] = useState({ x: 0, y: 0 })
+
+  // Navigation State
   const [activeSection, setActiveSection] = useState(1)
+
+  // AI Navigator (TwinGuide) State
+  const [navOpen, setNavOpen] = useState(false)
+  const [navQuery, setNavQuery] = useState('')
+  const [navResult, setNavResult] = useState<{
+    targetSection: number
+    moduleName: string
+    understanding: string
+    why: string
+  } | null>(null)
 
   // Module 01 State — Decision Twin Engine
   const [demand, setDemand] = useState(100)
@@ -294,7 +360,12 @@ function App() {
   const [error, setError] = useState('')
   const [justSimulated, setJustSimulated] = useState(false)
 
-  const [activeTab, setActiveTab] = useState<'none' | 'why' | 'whatif' | 'whatchanged' | 'scenarios' | 'futures' | 'explanation'>('none')
+  // Sequential Causal Propagation Step (1..4)
+  const [propagatingStep, setPropagatingStep] = useState<number>(0)
+
+  const [activeTab, setActiveTab] = useState<
+    'none' | 'why' | 'whatif' | 'whatchanged' | 'scenarios' | 'futures' | 'explanation'
+  >('none')
 
   const [explanation, setExplanation] = useState<DecisionExplanation | null>(null)
   const [loadingExplanation, setLoadingExplanation] = useState(false)
@@ -307,16 +378,57 @@ function App() {
   const [activeScenario, setActiveScenario] = useState<ScenarioSlot | null>(null)
   const [futuresComparison, setFuturesComparison] = useState<FuturesComparisonResult | null>(null)
 
-  // Module 02 State — Career Twin Case Study
-  const [careerSalary, setCareerSalary] = useState(135000)
-  const [careerRemoteDays, setCareerRemoteDays] = useState(2)
-  const [careerWorkHours, setCareerWorkHours] = useState(45)
-  const [careerLearningIndex, setCareerLearningIndex] = useState(7)
+  // Module 02 State — Career Twin Interactive Concept
+  const [selectedJob, setSelectedJob] = useState<'A' | 'B'>('A')
+  const [careerSalary, setCareerSalary] = useState(125000)
+  const [careerRemoteDays, setCareerRemoteDays] = useState(3)
+  const [careerWorkHours, setCareerWorkHours] = useState(42)
+  const [careerLearningIndex, setCareerLearningIndex] = useState(8)
+  const [careerRelocation, setCareerRelocation] = useState(false)
+  const [careerTimelineHorizon, setCareerTimelineHorizon] = useState<'NOW' | '2_YEARS' | '5_YEARS'>('NOW')
 
   // Module 03 State — Notice to Action Concept
-  const [noticeViewMode, setNoticeViewMode] = useState<'document' | 'extracted' | 'checklist'>('document')
+  const [noticeSampleId, setNoticeSampleId] = useState<'assessments' | 'hostel' | 'placement'>('assessments')
+  const [noticeText, setNoticeText] = useState(
+    'All senior degree candidates must submit their final project documentation and software repository links by October 15th before 11:59 PM. Submissions must include LaTeX documentation PDF, 3-minute video presentation, and tagged release on GitHub. Late submissions incur a 15% grade deduction per day.'
+  )
+  const [isEligibleToggle, setIsEligibleToggle] = useState(true)
+  const [checklistProgress, setChecklistProgress] = useState<Record<string, boolean>>({
+    req1: true,
+    req2: false,
+    req3: false,
+  })
 
-  // Section Observer Setup
+  // Module 04 State — Opportunity Verification Concept
+  const [oppName, setOppName] = useState('Senior AI Systems Intern')
+  const [oppOrg, setOppOrg] = useState('Global Cybernetic Labs')
+  const [oppSalary, setOppSalary] = useState('$140,000 / yr')
+  const [oppDeadline, setOppDeadline] = useState('October 30')
+  const [oppEligibility, setOppEligibility] = useState('All CS / ECE Degree Students')
+  const [oppUrl, setOppUrl] = useState('https://careers.globaltechlabs.org/roles/9402')
+  const [verificationActive, setVerificationActive] = useState(false)
+
+  // Preloader Timer & Pointer Tracking
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setIsPreloading(false)
+    }, 1400)
+
+    const handleMouseMove = (e: MouseEvent) => {
+      setMousePos({
+        x: (e.clientX / window.innerWidth - 0.5) * 20,
+        y: (e.clientY / window.innerHeight - 0.5) * 20,
+      })
+    }
+    window.addEventListener('mousemove', handleMouseMove)
+
+    return () => {
+      clearTimeout(timer)
+      window.removeEventListener('mousemove', handleMouseMove)
+    }
+  }, [])
+
+  // Section Observer
   useEffect(() => {
     const observer = new IntersectionObserver(
       (entries) => {
@@ -329,7 +441,7 @@ function App() {
           }
         })
       },
-      { threshold: 0.3 }
+      { threshold: 0.25 }
     )
 
     const sections = document.querySelectorAll('section[data-section]')
@@ -338,9 +450,90 @@ function App() {
     return () => observer.disconnect()
   }, [])
 
+  // TwinGuide Grounded Problem Router
+  const routeUserProblem = (query: string) => {
+    const text = query.toLowerCase()
+    if (
+      text.includes('job') ||
+      text.includes('salary') ||
+      text.includes('career') ||
+      text.includes('remote') ||
+      text.includes('commute') ||
+      text.includes('burnout') ||
+      text.includes('relocation') ||
+      text.includes('offer')
+    ) {
+      setNavResult({
+        targetSection: 2,
+        moduleName: '02 — DECISIONTWIN CAREER',
+        understanding: 'Your query involves job offers, compensation, commute, relocation, and long-term career growth trade-offs.',
+        why: 'Career choices affect salary, learning density, free time, and burnout risk simultaneously over time.',
+      })
+    } else if (
+      text.includes('notice') ||
+      text.includes('deadline') ||
+      text.includes('submit') ||
+      text.includes('college') ||
+      text.includes('academic') ||
+      text.includes('latex') ||
+      text.includes('hostel') ||
+      text.includes('exam')
+    ) {
+      setNavResult({
+        targetSection: 3,
+        moduleName: '03 — NOTICE → ACTION',
+        understanding: 'Your query involves unstructured academic notices, deadlines, and required submission items.',
+        why: 'Important college announcements contain critical requirements that must be transformed into personal action checklists.',
+      })
+    } else if (
+      text.includes('internship') ||
+      text.includes('verify') ||
+      text.includes('scam') ||
+      text.includes('legit') ||
+      text.includes('authentic') ||
+      text.includes('opportunity') ||
+      text.includes('hackathon') ||
+      text.includes('company')
+    ) {
+      setNavResult({
+        targetSection: 4,
+        moduleName: '04 — OPPORTUNITY VERIFICATION',
+        understanding: 'Your query involves evaluating the authenticity of an internship, job, or hackathon opportunity.',
+        why: 'Traces domain registration, corporate registries, market compensation benchmarks, and recruiter credentials.',
+      })
+    } else {
+      setNavResult({
+        targetSection: 1,
+        moduleName: '01 — DECISIONTWIN OPERATIONS',
+        understanding: 'Your query involves complex operational decisions, capacity constraints, inventory buffers, and system risks.',
+        why: 'The primary decision instrument models how one change in demand or lead time propagates through dependencies.',
+      })
+    }
+  }
+
+  const navigateToMatchedModule = () => {
+    if (!navResult) return
+    setNavOpen(false)
+    const targetId = `sec-0${navResult.targetSection}`
+    const el = document.getElementById(targetId)
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth' })
+    }
+  }
+
+  // Sequential Causal Propagation Trigger Function
+  const triggerCausalPropagation = useCallback(() => {
+    setPropagatingStep(1)
+    setTimeout(() => setPropagatingStep(2), 220)
+    setTimeout(() => setPropagatingStep(3), 440)
+    setTimeout(() => setPropagatingStep(4), 660)
+    setTimeout(() => setPropagatingStep(0), 1200)
+  }, [])
+
   async function simulate() {
     setLoading(true)
     setError('')
+    triggerCausalPropagation()
 
     try {
       const response = await fetch(`${API_BASE}/simulate`, {
@@ -371,6 +564,27 @@ function App() {
     }
   }
 
+  // Handle Input Changes with Causal Propagation Visual
+  const handleDemandChange = (val: number) => {
+    setDemand(val)
+    triggerCausalPropagation()
+  }
+
+  const handleCapacityChange = (val: number) => {
+    setCapacity(val)
+    triggerCausalPropagation()
+  }
+
+  const handleInventoryChange = (val: number) => {
+    setInventory(val)
+    triggerCausalPropagation()
+  }
+
+  const handleLeadTimeChange = (val: number) => {
+    setLeadTime(val)
+    triggerCausalPropagation()
+  }
+
   async function fetchCompareFutures(activeScenarios: Record<ScenarioSlot, ScenarioSnapshot | null>) {
     try {
       const response = await fetch(`${API_BASE}/compare-futures`, {
@@ -384,7 +598,7 @@ function App() {
       const data = (await response.json()) as FuturesComparisonResult
       setFuturesComparison(data)
     } catch {
-      // Fail gracefully
+      // Graceful fallback
     }
   }
 
@@ -410,7 +624,7 @@ function App() {
       const data = (await response.json()) as DecisionExplanation
       setExplanation(data)
     } catch {
-      // Graceful fallback handled backend-side
+      // Graceful fallback
     } finally {
       setLoadingExplanation(false)
     }
@@ -433,10 +647,10 @@ function App() {
   )
 
   function applyRecommendation(opt: CounterfactualOption) {
-    if (opt.target_field === 'capacity') setCapacity(opt.recommended_value)
-    else if (opt.target_field === 'demand') setDemand(opt.recommended_value)
-    else if (opt.target_field === 'inventory') setInventory(opt.recommended_value)
-    else if (opt.target_field === 'lead_time') setLeadTime(opt.recommended_value)
+    if (opt.target_field === 'capacity') handleCapacityChange(opt.recommended_value)
+    else if (opt.target_field === 'demand') handleDemandChange(opt.recommended_value)
+    else if (opt.target_field === 'inventory') handleInventoryChange(opt.recommended_value)
+    else if (opt.target_field === 'lead_time') handleLeadTimeChange(opt.recommended_value)
   }
 
   function saveScenario(slot: ScenarioSlot) {
@@ -470,6 +684,7 @@ function App() {
     setLeadTime(sc.lead_time)
     setResult(sc.result)
     setActiveScenario(slot)
+    triggerCausalPropagation()
   }
 
   function clearScenario(slot: ScenarioSlot) {
@@ -481,17 +696,57 @@ function App() {
     void fetchCompareFutures(updated)
   }
 
-  // Career Twin Calculations (Deterministic Frontend Case Study)
-  const careerSavings = Math.round(careerSalary * 0.42 - (5 - careerRemoteDays) * 3200)
+  // Career Job A vs Job B Switch
+  const switchJob = (job: 'A' | 'B') => {
+    setSelectedJob(job)
+    if (job === 'A') {
+      setCareerSalary(125000)
+      setCareerRemoteDays(3)
+      setCareerWorkHours(42)
+      setCareerLearningIndex(8)
+      setCareerRelocation(false)
+    } else {
+      setCareerSalary(165000)
+      setCareerRemoteDays(1)
+      setCareerWorkHours(54)
+      setCareerLearningIndex(9)
+      setCareerRelocation(true)
+    }
+  }
+
+  // Career Twin Calculations (Deterministic Client-side Concept Engine)
+  const careerMult = careerTimelineHorizon === '5_YEARS' ? 2.5 : careerTimelineHorizon === '2_YEARS' ? 1.6 : 1.0
+  const careerSavings = Math.round((careerSalary * 0.44 - (5 - careerRemoteDays) * 3400) * careerMult)
   const careerCommuteHours = Number(((5 - careerRemoteDays) * 1.2).toFixed(1))
-  const careerFreeHours = Math.max(10, Math.round(168 - careerWorkHours - careerCommuteHours * 5 - 56))
-  const careerSkillGrowth = Math.round(careerLearningIndex * 9 + (careerWorkHours > 44 ? 18 : 6))
+  const careerFreeHours = Math.max(8, Math.round((168 - careerWorkHours - careerCommuteHours * 5 - 56) * (careerRelocation ? 0.85 : 1)))
+  const careerSkillGrowth = Math.round((careerLearningIndex * 8.5 + (careerWorkHours > 44 ? 16 : 6)) * (careerTimelineHorizon === '5_YEARS' ? 2.2 : careerTimelineHorizon === '2_YEARS' ? 1.4 : 1))
   const careerRisk =
     careerWorkHours >= 52 || careerCommuteHours >= 6.5
       ? 'HIGH'
       : careerWorkHours >= 44
       ? 'MEDIUM'
       : 'LOW'
+
+  // Notice Sample Loader
+  const loadNoticeSample = (id: 'assessments' | 'hostel' | 'placement') => {
+    setNoticeSampleId(id)
+    if (id === 'assessments') {
+      setNoticeText(
+        'All senior degree candidates must submit their final project documentation and software repository links by October 15th before 11:59 PM. Submissions must include LaTeX documentation PDF, 3-minute video presentation, and tagged release on GitHub. Late submissions incur a 15% grade deduction per day.'
+      )
+    } else if (id === 'hostel') {
+      setNoticeText(
+        'Hostel room allocation for the spring term opens on October 25th. All residents must upload clearance receipts from the accounts department and complete biometric re-verification by October 20th. Unregistered rooms will be reallocated to waitlist applicants.'
+      )
+    } else {
+      setNoticeText(
+        'Campus placement drive for Core Systems Engineering commences November 1st. Eligible candidates must have a CPI >= 7.5, zero active backlogs, and submit signed NOC forms from the department head before October 28th.'
+      )
+    }
+  }
+
+  // Nodes & Edges Setup
+  const isWhyActive = activeTab === 'why'
 
   const nodes = useMemo<Node[]>(
     () => [
@@ -503,9 +758,10 @@ function App() {
           title: 'Input Demand',
           value: `${demand} units`,
           detail: `${leadTime} day lead time`,
-          status: 'INPUT',
+          status: 'DECISION INPUT',
           nodeType: 'input',
-          isHighlighted: activeTab === 'why',
+          isHighlighted: isWhyActive,
+          stepActive: propagatingStep === 1,
         },
       },
       {
@@ -518,7 +774,9 @@ function App() {
           detail: `${Math.round(result.utilization * 100)}% utilization`,
           status: 'DEPENDENCY',
           nodeType: 'dependency',
-          isHighlighted: activeTab === 'why',
+          isHighlighted: isWhyActive,
+          isDimmed: !isWhyActive && activeTab !== 'none',
+          stepActive: propagatingStep === 2,
         },
       },
       {
@@ -531,7 +789,9 @@ function App() {
           detail: `${result.projected_inventory} units projected`,
           status: 'DEPENDENCY',
           nodeType: 'dependency',
-          isHighlighted: activeTab === 'why',
+          isHighlighted: isWhyActive,
+          isDimmed: !isWhyActive && activeTab !== 'none',
+          stepActive: propagatingStep === 2,
         },
       },
       {
@@ -542,16 +802,17 @@ function App() {
           title: 'System Consequence',
           value: `${result.delay_days} days`,
           detail: `${result.risk} Risk • $${result.cost.toLocaleString()}`,
-          status: 'OUTPUT',
+          status: 'CONSEQUENCE',
           nodeType: 'output',
           riskLevel: result.risk,
-          isHighlighted: activeTab === 'why',
+          isHighlighted: isWhyActive,
           showWhyButton: true,
           onWhyClick: () => toggleTab('why'),
+          stepActive: propagatingStep === 3 || propagatingStep === 4,
         },
       },
     ],
-    [demand, inventory, capacity, leadTime, result, activeTab, toggleTab]
+    [demand, inventory, capacity, leadTime, result, isWhyActive, activeTab, propagatingStep, toggleTab]
   )
 
   const edges = useMemo<Edge[]>(
@@ -560,76 +821,241 @@ function App() {
         id: 'e-input-capacity',
         source: 'input',
         target: 'capacity',
-        animated: justSimulated,
-        style: { stroke: '#38bdf8', strokeWidth: 1.5 },
+        animated: justSimulated || propagatingStep === 1 || propagatingStep === 2,
+        style: {
+          stroke: isWhyActive || propagatingStep === 1 || propagatingStep === 2 ? '#38bdf8' : '#30363d',
+          strokeWidth: isWhyActive || propagatingStep === 1 ? 2.5 : 1.5,
+        },
       },
       {
         id: 'e-input-inventory',
         source: 'input',
         target: 'inventory',
-        animated: justSimulated,
-        style: { stroke: '#38bdf8', strokeWidth: 1.5 },
+        animated: justSimulated || propagatingStep === 1 || propagatingStep === 2,
+        style: {
+          stroke: isWhyActive || propagatingStep === 1 || propagatingStep === 2 ? '#38bdf8' : '#30363d',
+          strokeWidth: isWhyActive || propagatingStep === 1 ? 2.5 : 1.5,
+        },
       },
       {
         id: 'e-capacity-consequence',
         source: 'capacity',
         target: 'consequence',
-        animated: justSimulated,
+        animated: justSimulated || propagatingStep === 2 || propagatingStep === 3,
         style: {
-          stroke: result.risk === 'HIGH' ? '#f85149' : result.risk === 'MEDIUM' ? '#d29922' : '#2ea043',
-          strokeWidth: 1.5,
+          stroke: result.risk === 'HIGH' ? '#f85149' : result.risk === 'MEDIUM' ? '#d29922' : '#38bdf8',
+          strokeWidth: isWhyActive || propagatingStep === 2 || propagatingStep === 3 ? 2.5 : 1.5,
         },
       },
       {
         id: 'e-inventory-consequence',
         source: 'inventory',
         target: 'consequence',
-        animated: justSimulated,
+        animated: justSimulated || propagatingStep === 2 || propagatingStep === 3,
         style: {
-          stroke: result.risk === 'HIGH' ? '#f85149' : result.risk === 'MEDIUM' ? '#d29922' : '#2ea043',
-          strokeWidth: 1.5,
+          stroke: result.risk === 'HIGH' ? '#f85149' : result.risk === 'MEDIUM' ? '#d29922' : '#38bdf8',
+          strokeWidth: isWhyActive || propagatingStep === 2 || propagatingStep === 3 ? 2.5 : 1.5,
         },
       },
     ],
-    [result.risk, justSimulated]
+    [result.risk, justSimulated, isWhyActive, propagatingStep]
   )
 
   return (
     <main className="app-shell">
-      {/* Persistent Floating Navigation & Section Counter */}
-      <nav className="persistent-nav" aria-label="Product Navigation">
-        <BrandLogo />
-        <div className="nav-links">
-          <a href="#sec-01" className={activeSection === 1 ? 'active' : ''}>01 Decision</a>
-          <a href="#sec-02" className={activeSection === 2 ? 'active' : ''}>02 Career</a>
-          <a href="#sec-03" className={activeSection === 3 ? 'active' : ''}>03 Notice</a>
-          <a href="#sec-04" className={activeSection === 4 ? 'active' : ''}>04 Verification</a>
+      {/* 1. Preloader Screen (~1.4s) */}
+      {isPreloading && (
+        <div className="preloader-overlay" aria-label="System Initializing">
+          <div className="preloader-content">
+            <BrandLogo />
+            <div className="preloader-title">DECISIONTWIN</div>
+            <div className="preloader-status">
+              <span className="live-dot" /> SYSTEM INITIALIZING...
+            </div>
+            <div className="preloader-bar">
+              <div className="preloader-bar-fill" />
+            </div>
+          </div>
         </div>
-        <div className="section-counter" aria-label="Section counter">
-          <span className="counter-curr">0{activeSection}</span>
-          <span className="counter-sep">/</span>
-          <span className="counter-max">04</span>
+      )}
+
+      {/* 2. Fixed Editorial Navigation Bar with Section Progress Rail */}
+      <nav className="persistent-nav" aria-label="Product Navigation">
+        <div className="nav-left">
+          <BrandLogo />
+        </div>
+
+        <div className="nav-links">
+          <a href="#sec-01" className={activeSection === 1 ? 'active' : ''}>
+            <ModuleMark module="01" /> 01 DECISION
+          </a>
+          <a href="#sec-02" className={activeSection === 2 ? 'active' : ''}>
+            <ModuleMark module="02" /> 02 CAREER
+          </a>
+          <a href="#sec-03" className={activeSection === 3 ? 'active' : ''}>
+            <ModuleMark module="03" /> 03 NOTICE
+          </a>
+          <a href="#sec-04" className={activeSection === 4 ? 'active' : ''}>
+            <ModuleMark module="04" /> 04 VERIFY
+          </a>
+        </div>
+
+        <div className="nav-right">
+          <div className="nav-progress-rail" aria-hidden="true">
+            <span className={`rail-dot ${activeSection >= 1 ? 'active' : ''}`} />
+            <span className={`rail-dot ${activeSection >= 2 ? 'active' : ''}`} />
+            <span className={`rail-dot ${activeSection >= 3 ? 'active' : ''}`} />
+            <span className={`rail-dot ${activeSection >= 4 ? 'active' : ''}`} />
+          </div>
+          <div className="section-counter" aria-label="Section Counter">
+            <span className="counter-curr">0{activeSection}</span>
+            <span className="counter-sep">/</span>
+            <span className="counter-max">04</span>
+          </div>
         </div>
       </nav>
 
-      {/* SECTION 01 — DECISIONTWIN COMPLEX DECISIONS (PRIMARY ENGINE PRODUCT) */}
+      {/* 3. Text-Only AI Navigator Widget (TwinGuide) */}
+      <div className="twin-guide-wrapper">
+        {!navOpen ? (
+          <button
+            className="twin-guide-btn"
+            onClick={() => setNavOpen(true)}
+            aria-label="Open DecisionTwin Navigator"
+          >
+            <span className="tg-icon">✦</span>
+            <span>TWIN GUIDE</span>
+          </button>
+        ) : (
+          <div className="twin-guide-drawer">
+            <div className="tg-header">
+              <div className="tg-title-row">
+                <span className="tg-icon">✦</span>
+                <strong>DECISIONTWIN NAVIGATOR</strong>
+              </div>
+              <button className="tg-close" onClick={() => setNavOpen(false)}>✕</button>
+            </div>
+
+            <p className="tg-prompt-lbl">Describe a real-world decision or problem to route:</p>
+
+            <textarea
+              className="tg-textarea"
+              placeholder="e.g. 'I have a job offer with higher salary but long commute hours...' or 'My operations team faces capacity bottlenecks...'"
+              value={navQuery}
+              onChange={(e) => {
+                setNavQuery(e.target.value)
+                if (e.target.value.trim().length > 3) {
+                  routeUserProblem(e.target.value)
+                }
+              }}
+            />
+
+            <div className="tg-quick-prompts">
+              <span>QUICK PROMPTS:</span>
+              <button onClick={() => { setNavQuery('Job offer with higher pay but relocation'); routeUserProblem('Job offer with higher pay but relocation'); }}>
+                Career Offer
+              </button>
+              <button onClick={() => { setNavQuery('Capacity bottleneck and demand surge'); routeUserProblem('Capacity bottleneck and demand surge'); }}>
+                Operations
+              </button>
+              <button onClick={() => { setNavQuery('College notice with LaTeX PDF deadline'); routeUserProblem('College notice with LaTeX PDF deadline'); }}>
+                Notice
+              </button>
+              <button onClick={() => { setNavQuery('Is this remote internship authentic?'); routeUserProblem('Is this remote internship authentic?'); }}>
+                Verify
+              </button>
+            </div>
+
+            {navResult && (
+              <div className="tg-result-box">
+                <div className="tg-res-sec">
+                  <span className="tg-res-lbl">UNDERSTANDING</span>
+                  <p>{navResult.understanding}</p>
+                </div>
+
+                <div className="tg-res-sec">
+                  <span className="tg-res-lbl">MATCHED MODULE</span>
+                  <strong className="tg-res-mod">{navResult.moduleName}</strong>
+                </div>
+
+                <div className="tg-res-sec">
+                  <span className="tg-res-lbl">GROUNDING WHY</span>
+                  <p>{navResult.why}</p>
+                </div>
+
+                <button className="tg-action-btn" onClick={navigateToMatchedModule}>
+                  OPEN MODULE →
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* SECTION 01 — DECISIONTWIN PRIMARY CAUSAL GRAPH ENGINE */}
       <section id="sec-01" data-section="1" className="product-section">
-        <header className="topbar">
-          <div>
-            <div className="eyebrow">01 / DECISIONTWIN — COMPLEX DECISIONS</div>
-            <h1>SEE THE CONSEQUENCES BEFORE YOU COMMIT.</h1>
-            <p className="subtitle">
-              A living decision interface for testing how one change propagates through a system.
+        {/* Full Viewport Opening Hero Scene */}
+        <div className="hero-block">
+          <div className="hero-kicker">
+            <span className="kicker-tag">DECISIONTWIN</span>
+            <span className="kicker-sep">•</span>
+            <span className="kicker-sub">SYSTEM / 01</span>
+          </div>
+          <h1 className="hero-headline">
+            SEE WHAT HAPPENS <br />
+            BEFORE YOU COMMIT.
+          </h1>
+          <p className="hero-subheadline">
+            "Decisions don't happen in isolation." — A decision intelligence interface for seeing consequences, comparing futures, and turning uncertainty into action.
+          </p>
+
+          <div className="hero-ctas">
+            <a href="#decision-workspace" className="hero-primary-btn">
+              ENTER DECISION ROOM ↓
+            </a>
+            <a href="#sec-02" className="hero-secondary-btn">
+              EXPLORE SYSTEM FUTURES
+            </a>
+          </div>
+        </div>
+
+        {/* Pointer-Interactive Decision Container Parallax Scene */}
+        <div
+          className="decision-container-scene"
+          style={{
+            transform: `perspective(1000px) rotateX(${mousePos.y * 0.15}deg) rotateY(${mousePos.x * 0.15}deg)`,
+          }}
+        >
+          <div className="scene-card">
+            <div className="scene-badge">DECISION TWIN CAUSAL SYSTEM MAP</div>
+            <div className="scene-graphic">
+              <div className="scene-node n1">INPUT</div>
+              <div className="scene-line l1" />
+              <div className="scene-node n2">DEPENDENCY</div>
+              <div className="scene-line l2" />
+              <div className="scene-node n3">CONSEQUENCE</div>
+            </div>
+            <p className="scene-caption">
+              Continuous Causal Graph Architecture — Deterministic simulation engine calculating real-time system trade-offs.
             </p>
           </div>
-          <div className="status-pill" aria-label="AWS Elastic Beanstalk Live API Status">
-            <span className="live-dot" />
-            <span>AWS • LIVE API</span>
+        </div>
+
+        {/* Primary Interactive Decision Workspace */}
+        <div id="decision-workspace" className="workspace-header">
+          <div>
+            <div className="eyebrow">01 / DECISIONTWIN — SEE THE CONSEQUENCES</div>
+            <h2>Interactive Decision Room</h2>
           </div>
-        </header>
+          <div className="status-pill" aria-label="AWS Live API Status">
+            <span className="live-dot" />
+            <span>AWS • ELASTIC BEANSTALK • LIVE API</span>
+          </div>
+        </div>
 
         <div className="workspace">
-          <aside className="control-panel" aria-label="Decision Controls Console">
+          {/* Controls Console */}
+          <aside className="control-panel" aria-label="Decision Console">
             <div className="section-label">DECISION INPUTS</div>
 
             <div className="control-item">
@@ -639,7 +1065,7 @@ function App() {
                   <button
                     type="button"
                     className="step-btn"
-                    onClick={() => setDemand((prev) => Math.max(20, prev - 5))}
+                    onClick={() => handleDemandChange(Math.max(20, demand - 5))}
                     aria-label="Decrease demand"
                   >
                     -
@@ -648,7 +1074,7 @@ function App() {
                   <button
                     type="button"
                     className="step-btn"
-                    onClick={() => setDemand((prev) => Math.min(200, prev + 5))}
+                    onClick={() => handleDemandChange(Math.min(200, demand + 5))}
                     aria-label="Increase demand"
                   >
                     +
@@ -665,18 +1091,18 @@ function App() {
                 style={{
                   background: `linear-gradient(to right, #38bdf8 0%, #38bdf8 ${((demand - 20) / 180) * 100}%, #21262d ${((demand - 20) / 180) * 100}%, #21262d 100%)`,
                 }}
-                onChange={(event) => setDemand(Number(event.target.value))}
+                onChange={(e) => handleDemandChange(Number(e.target.value))}
               />
             </div>
 
             <div className="control-item">
               <div className="control-heading">
-                <span>Inventory</span>
+                <span>Inventory Buffer</span>
                 <div className="control-val-group">
                   <button
                     type="button"
                     className="step-btn"
-                    onClick={() => setInventory((prev) => Math.max(0, prev - 5))}
+                    onClick={() => handleInventoryChange(Math.max(0, inventory - 5))}
                     aria-label="Decrease inventory"
                   >
                     -
@@ -685,7 +1111,7 @@ function App() {
                   <button
                     type="button"
                     className="step-btn"
-                    onClick={() => setInventory((prev) => Math.min(200, prev + 5))}
+                    onClick={() => handleInventoryChange(Math.min(200, inventory + 5))}
                     aria-label="Increase inventory"
                   >
                     +
@@ -702,7 +1128,7 @@ function App() {
                 style={{
                   background: `linear-gradient(to right, #38bdf8 0%, #38bdf8 ${(inventory / 200) * 100}%, #21262d ${(inventory / 200) * 100}%, #21262d 100%)`,
                 }}
-                onChange={(event) => setInventory(Number(event.target.value))}
+                onChange={(e) => handleInventoryChange(Number(e.target.value))}
               />
             </div>
 
@@ -713,7 +1139,7 @@ function App() {
                   <button
                     type="button"
                     className="step-btn"
-                    onClick={() => setCapacity((prev) => Math.max(20, prev - 5))}
+                    onClick={() => handleCapacityChange(Math.max(20, capacity - 5))}
                     aria-label="Decrease capacity"
                   >
                     -
@@ -722,7 +1148,7 @@ function App() {
                   <button
                     type="button"
                     className="step-btn"
-                    onClick={() => setCapacity((prev) => Math.min(200, prev + 5))}
+                    onClick={() => handleCapacityChange(Math.min(200, capacity + 5))}
                     aria-label="Increase capacity"
                   >
                     +
@@ -739,18 +1165,18 @@ function App() {
                 style={{
                   background: `linear-gradient(to right, #38bdf8 0%, #38bdf8 ${((capacity - 20) / 180) * 100}%, #21262d ${((capacity - 20) / 180) * 100}%, #21262d 100%)`,
                 }}
-                onChange={(event) => setCapacity(Number(event.target.value))}
+                onChange={(e) => handleCapacityChange(Number(e.target.value))}
               />
             </div>
 
             <div className="control-item">
               <div className="control-heading">
-                <span>Lead time</span>
+                <span>Lead Time</span>
                 <div className="control-val-group">
                   <button
                     type="button"
                     className="step-btn"
-                    onClick={() => setLeadTime((prev) => Math.max(1, prev - 1))}
+                    onClick={() => handleLeadTimeChange(Math.max(1, leadTime - 1))}
                     aria-label="Decrease lead time"
                   >
                     -
@@ -759,7 +1185,7 @@ function App() {
                   <button
                     type="button"
                     className="step-btn"
-                    onClick={() => setLeadTime((prev) => Math.min(30, prev + 1))}
+                    onClick={() => handleLeadTimeChange(Math.min(30, leadTime + 1))}
                     aria-label="Increase lead time"
                   >
                     +
@@ -775,7 +1201,7 @@ function App() {
                 style={{
                   background: `linear-gradient(to right, #38bdf8 0%, #38bdf8 ${((leadTime - 1) / 29) * 100}%, #21262d ${((leadTime - 1) / 29) * 100}%, #21262d 100%)`,
                 }}
-                onChange={(event) => setLeadTime(Number(event.target.value))}
+                onChange={(e) => handleLeadTimeChange(Number(e.target.value))}
               />
             </div>
 
@@ -783,9 +1209,9 @@ function App() {
               className="simulate-button"
               onClick={simulate}
               disabled={loading}
-              aria-label="Run simulation"
+              aria-label="Run Simulation"
             >
-              {loading ? 'Simulating...' : 'Run simulation'}
+              {loading ? 'SIMULATING SYSTEM...' : 'RUN SIMULATION'}
             </button>
 
             {error && (
@@ -796,7 +1222,7 @@ function App() {
             )}
 
             <div className="quick-scenarios">
-              <div className="section-label">SAVE SCENARIOS</div>
+              <div className="section-label">SCENARIO SAVES (A / B / C)</div>
               <div className="slot-tabs">
                 {(['A', 'B', 'C'] as ScenarioSlot[]).map((slot) => {
                   const sc = scenarios[slot]
@@ -817,16 +1243,17 @@ function App() {
             </div>
 
             <div className="console-footer">
-              <span>DETERMINISTIC SIMULATION</span>
-              <p>Propagation, causal traces, & futures computed directly by backend engine.</p>
+              <span>DETERMINISTIC ENGINE</span>
+              <p>State changes compute directly via linear bottleneck & risk models.</p>
             </div>
           </aside>
 
+          {/* Graph Room */}
           <div className="graph-room">
             <div className="graph-topbar">
               <div className="graph-title-block">
                 <span className="section-label">CAUSAL SYSTEM MAP</span>
-                <h2>Decision Room</h2>
+                <h2>Consequence Propagation</h2>
               </div>
 
               <div className="analysis-tabs" role="tablist">
@@ -836,7 +1263,7 @@ function App() {
                   role="tab"
                   aria-selected={activeTab === 'why'}
                 >
-                  WHY? Trace
+                  WHY? TRACE
                 </button>
                 <button
                   className={`tab-item ${activeTab === 'whatif' ? 'active' : ''}`}
@@ -844,7 +1271,7 @@ function App() {
                   role="tab"
                   aria-selected={activeTab === 'whatif'}
                 >
-                  Counterfactuals
+                  COUNTERFACTUALS
                 </button>
                 <button
                   className={`tab-item ${activeTab === 'whatchanged' ? 'active' : ''}`}
@@ -852,7 +1279,7 @@ function App() {
                   role="tab"
                   aria-selected={activeTab === 'whatchanged'}
                 >
-                  What Changed
+                  WHAT CHANGED
                 </button>
                 <button
                   className={`tab-item ${activeTab === 'scenarios' ? 'active' : ''}`}
@@ -860,7 +1287,7 @@ function App() {
                   role="tab"
                   aria-selected={activeTab === 'scenarios'}
                 >
-                  Scenarios
+                  SCENARIOS
                 </button>
                 <button
                   className={`tab-item ${activeTab === 'futures' ? 'active' : ''}`}
@@ -868,7 +1295,7 @@ function App() {
                   role="tab"
                   aria-selected={activeTab === 'futures'}
                 >
-                  Compare Futures
+                  COMPARE FUTURES
                 </button>
                 <button
                   className={`tab-item ${activeTab === 'explanation' ? 'active' : ''}`}
@@ -876,7 +1303,7 @@ function App() {
                   role="tab"
                   aria-selected={activeTab === 'explanation'}
                 >
-                  Context Explanation
+                  EXPLANATION
                 </button>
               </div>
 
@@ -899,8 +1326,10 @@ function App() {
                       nodeType={data.nodeType as 'input' | 'dependency' | 'output' | undefined}
                       riskLevel={data.riskLevel as string | undefined}
                       isHighlighted={Boolean(data.isHighlighted)}
+                      isDimmed={Boolean(data.isDimmed)}
                       showWhyButton={Boolean(data.showWhyButton)}
                       onWhyClick={data.onWhyClick as (() => void) | undefined}
+                      stepActive={Boolean(data.stepActive)}
                     />
                   ),
                 }}
@@ -915,6 +1344,7 @@ function App() {
               </ReactFlow>
             </div>
 
+            {/* Metric Strip */}
             <div className="metric-strip">
               <div className="metric-item">
                 <span className="metric-lbl">PROJECTED INVENTORY</span>
@@ -940,7 +1370,7 @@ function App() {
               </div>
             </div>
 
-            {/* Integrated Analysis Panels */}
+            {/* WHY? Panel Drawer */}
             {activeTab === 'why' && (
               <div className="analysis-panel">
                 <div className="panel-header">
@@ -969,6 +1399,7 @@ function App() {
               </div>
             )}
 
+            {/* Counterfactual Options Panel */}
             {activeTab === 'whatif' && (
               <div className="analysis-panel">
                 <div className="panel-header">
@@ -1021,6 +1452,7 @@ function App() {
               </div>
             )}
 
+            {/* What Changed Panel */}
             {activeTab === 'whatchanged' && (
               <div className="analysis-panel">
                 <div className="panel-header">
@@ -1058,6 +1490,7 @@ function App() {
               </div>
             )}
 
+            {/* Scenarios Management Panel */}
             {activeTab === 'scenarios' && (
               <div className="analysis-panel">
                 <div className="panel-header">
@@ -1107,6 +1540,7 @@ function App() {
               </div>
             )}
 
+            {/* Compare Futures Panel */}
             {activeTab === 'futures' && (
               <div className="analysis-panel">
                 <div className="panel-header">
@@ -1165,6 +1599,7 @@ function App() {
               </div>
             )}
 
+            {/* Context Explanation Panel */}
             {activeTab === 'explanation' && (
               <div className="analysis-panel">
                 <div className="panel-header">
@@ -1222,23 +1657,43 @@ function App() {
         </div>
       </section>
 
-      {/* SECTION 02 — DECISIONTWIN CAREER CASE STUDY */}
+      {/* SECTION 02 — DECISIONTWIN CAREER (INTERACTIVE CONCEPT) */}
       <section id="sec-02" data-section="2" className="case-study-section">
         <div className="section-header-block">
-          <div className="eyebrow">02 / CAREER CASE STUDY</div>
-          <h2>TAKE THE JOB? SEE WHAT FOLLOWS.</h2>
+          <div className="eyebrow-row">
+            <span className="eyebrow">02 / DECISIONTWIN CAREER</span>
+            <span className="concept-badge">INTERACTIVE CONCEPT</span>
+          </div>
+          <h2>CHOOSE A PATH. SEE WHERE IT LEADS.</h2>
           <p className="subtitle">
-            Model real-world career tradeoffs — salary, remote flexibility, discretionary time, and burnout risk — using the same causal dependency concept.
+            Compare Job A vs Job B trade-offs — salary, commute time, learning intensity, relocation, and burnout risk simultaneously over time.
           </p>
+        </div>
+
+        {/* Job A vs Job B Quick Presets */}
+        <div className="job-toggle-bar">
+          <span className="section-label">CAREER OFFERS:</span>
+          <button
+            className={`job-btn ${selectedJob === 'A' ? 'active' : ''}`}
+            onClick={() => switchJob('A')}
+          >
+            JOB A (High Learning & Hybrid)
+          </button>
+          <button
+            className={`job-btn ${selectedJob === 'B' ? 'active' : ''}`}
+            onClick={() => switchJob('B')}
+          >
+            JOB B (High Pay & Onsite)
+          </button>
         </div>
 
         <div className="case-study-grid">
           <div className="case-controls-panel">
-            <span className="section-label">CAREER ASSUMPTIONS</span>
+            <span className="section-label">CAREER DECISION INPUTS</span>
 
             <div className="control-item">
               <div className="control-heading">
-                <span>Base Salary</span>
+                <span>Base Salary Offer</span>
                 <strong>${careerSalary.toLocaleString()} / yr</strong>
               </div>
               <input
@@ -1257,7 +1712,7 @@ function App() {
 
             <div className="control-item">
               <div className="control-heading">
-                <span>Remote Days</span>
+                <span>Remote Days / Week</span>
                 <strong>{careerRemoteDays} days / wk</strong>
               </div>
               <input
@@ -1295,7 +1750,7 @@ function App() {
 
             <div className="control-item">
               <div className="control-heading">
-                <span>Learning Density</span>
+                <span>Learning Intensity</span>
                 <strong>Level {careerLearningIndex} / 10</strong>
               </div>
               <input
@@ -1311,32 +1766,67 @@ function App() {
                 onChange={(e) => setCareerLearningIndex(Number(e.target.value))}
               />
             </div>
+
+            <div className="control-item-row">
+              <span>Relocation Required?</span>
+              <button
+                className={`toggle-btn ${careerRelocation ? 'active' : ''}`}
+                onClick={() => setCareerRelocation(!careerRelocation)}
+              >
+                {careerRelocation ? 'YES (Relocate)' : 'NO (Local)'}
+              </button>
+            </div>
+
+            {/* Timeline Horizon Selector */}
+            <div className="horizon-selector">
+              <span className="section-label">TIMELINE HORIZON</span>
+              <div className="horizon-btn-group">
+                <button
+                  className={careerTimelineHorizon === 'NOW' ? 'active' : ''}
+                  onClick={() => setCareerTimelineHorizon('NOW')}
+                >
+                  NOW
+                </button>
+                <button
+                  className={careerTimelineHorizon === '2_YEARS' ? 'active' : ''}
+                  onClick={() => setCareerTimelineHorizon('2_YEARS')}
+                >
+                  2 YEARS
+                </button>
+                <button
+                  className={careerTimelineHorizon === '5_YEARS' ? 'active' : ''}
+                  onClick={() => setCareerTimelineHorizon('5_YEARS')}
+                >
+                  5 YEARS
+                </button>
+              </div>
+            </div>
           </div>
 
           <div className="case-display-panel">
-            <span className="section-label">CAUSAL DEPENDENCY CHAIN</span>
+            <span className="section-label">CAUSAL CAREER DEPENDENCY CHAIN</span>
             <div className="career-chain-visual">
               <div className="chain-node">
-                <span className="c-lbl">JOB OFFER</span>
+                <span className="c-lbl">JOB OFFER ({selectedJob})</span>
                 <strong className="c-val">${careerSalary.toLocaleString()}</strong>
                 <span className="c-sub">{careerWorkHours}h workweek</span>
               </div>
               <span className="c-arrow">→</span>
               <div className="chain-node">
-                <span className="c-lbl">NET SAVINGS</span>
-                <strong className="c-val">${careerSavings.toLocaleString()}/yr</strong>
-                <span className="c-sub">after tax & travel</span>
+                <span className="c-lbl">NET SAVINGS ({careerTimelineHorizon})</span>
+                <strong className="c-val">${careerSavings.toLocaleString()}</strong>
+                <span className="c-sub">after taxes & commute</span>
               </div>
               <span className="c-arrow">→</span>
               <div className="chain-node">
-                <span className="c-lbl">COMMUTE & TIME</span>
-                <strong className="c-val">{careerCommuteHours}h/wk</strong>
-                <span className="c-sub">{careerFreeHours}h free time</span>
+                <span className="c-lbl">DISCRETIONARY TIME</span>
+                <strong className="c-val">{careerCommuteHours}h commute</strong>
+                <span className="c-sub">{careerFreeHours}h free / wk</span>
               </div>
               <span className="c-arrow">→</span>
               <div className="chain-node">
-                <span className="c-lbl">GROWTH & RISK</span>
-                <strong className="c-val">+{careerSkillGrowth}% / yr</strong>
+                <span className="c-lbl">COMPOUNDED GROWTH</span>
+                <strong className="c-val">+{careerSkillGrowth}% skill index</strong>
                 <span className={`risk-tag risk-${careerRisk.toLowerCase()}`}>{careerRisk} BURNOUT</span>
               </div>
             </div>
@@ -1344,121 +1834,208 @@ function App() {
         </div>
       </section>
 
-      {/* SECTION 03 — NOTICE TO ACTION PRODUCT CONCEPT SHOWCASE */}
+      {/* SECTION 03 — NOTICE → ACTION (CONCEPT WORKFLOW) */}
       <section id="sec-03" data-section="3" className="case-study-section">
         <div className="section-header-block">
-          <div className="eyebrow">03 / NOTICE → ACTION CONCEPT</div>
-          <h2>TURN A NOTICE INTO ACTION.</h2>
+          <div className="eyebrow-row">
+            <span className="eyebrow">03 / NOTICE → ACTION</span>
+            <span className="concept-badge">CONCEPT WORKFLOW</span>
+          </div>
+          <h2>TURN INFORMATION INTO ACTION.</h2>
           <p className="subtitle">
-            Unstructured announcements and academic deadlines transformed into structured requirement cards and actionable checklists.
+            Flow: NOTICE → WHAT? → WHO? → WHEN? → WHERE? → REQUIREMENTS → ACTIONS
           </p>
         </div>
 
         <div className="notice-concept-container">
-          <div className="notice-tab-bar">
+          <div className="sample-selector-bar">
+            <span>SAMPLE NOTICES:</span>
             <button
-              className={`n-tab ${noticeViewMode === 'document' ? 'active' : ''}`}
-              onClick={() => setNoticeViewMode('document')}
+              className={`sample-btn ${noticeSampleId === 'assessments' ? 'active' : ''}`}
+              onClick={() => loadNoticeSample('assessments')}
             >
-              1. Raw Notice Document
+              Final Defense
             </button>
             <button
-              className={`n-tab ${noticeViewMode === 'extracted' ? 'active' : ''}`}
-              onClick={() => setNoticeViewMode('extracted')}
+              className={`sample-btn ${noticeSampleId === 'hostel' ? 'active' : ''}`}
+              onClick={() => loadNoticeSample('hostel')}
             >
-              2. Extracted Requirements
+              Hostel Re-allocation
             </button>
             <button
-              className={`n-tab ${noticeViewMode === 'checklist' ? 'active' : ''}`}
-              onClick={() => setNoticeViewMode('checklist')}
+              className={`sample-btn ${noticeSampleId === 'placement' ? 'active' : ''}`}
+              onClick={() => loadNoticeSample('placement')}
             >
-              3. Action Checklist
+              Placement Drive
             </button>
           </div>
 
-          <div className="notice-display-body">
-            {noticeViewMode === 'document' && (
-              <div className="notice-doc-card">
-                <div className="doc-header">
-                  <span className="doc-stamp">OFFICIAL NOTICE #409</span>
-                  <span className="doc-date">Issued: Oct 2nd</span>
-                </div>
-                <h3>Final Year Project Defense & Submission Timeline</h3>
-                <p>
-                  All senior degree candidates must submit their final project documentation and software repository links by October 15th before 11:59 PM. Submissions must include LaTeX documentation PDF, 3-minute video presentation, and tagged release on GitHub. Late submissions incur a 15% grade deduction per day.
-                </p>
-                <div className="doc-footer">
-                  <span>Source: Academic Senate Board</span>
-                </div>
+          <div className="notice-grid">
+            {/* Raw Document Metaphor */}
+            <div className="notice-doc-card">
+              <div className="doc-header">
+                <span className="doc-stamp">OFFICIAL DOCUMENT</span>
+                <span className="doc-date">OCTOBER 2026</span>
               </div>
-            )}
+              <textarea
+                className="notice-textarea"
+                value={noticeText}
+                onChange={(e) => setNoticeText(e.target.value)}
+                aria-label="Raw notice document text"
+              />
+              <div className="doc-footer">
+                <button
+                  className={`eligibility-btn ${isEligibleToggle ? 'active' : ''}`}
+                  onClick={() => setIsEligibleToggle(!isEligibleToggle)}
+                >
+                  {isEligibleToggle ? '✓ I AM ELIGIBLE' : '✗ NOT ELIGIBLE'}
+                </button>
+              </div>
+            </div>
 
-            {noticeViewMode === 'extracted' && (
-              <div className="notice-extracted-grid">
-                <div className="ex-card">
-                  <span className="ex-lbl">REQUIREMENT 01</span>
-                  <strong>LaTeX Documentation PDF</strong>
-                  <p>Comprehensive system architecture & test verification report.</p>
-                </div>
-                <div className="ex-card">
-                  <span className="ex-lbl">REQUIREMENT 02</span>
-                  <strong>3-Min Video Demo</strong>
-                  <p>Screen recording demonstrating core system features.</p>
-                </div>
-                <div className="ex-card">
-                  <span className="ex-lbl">HARD DEADLINE</span>
-                  <strong className="deadline-val">October 15, 11:59 PM</strong>
-                  <p>Penalty: 15% deduction per 24-hour delay.</p>
+            {/* Transformed Action Checklist & Requirements */}
+            <div className="notice-transformed-card">
+              <div className="tr-header">
+                <span className="section-label">STRUCTURED ACTION SEQUENCE</span>
+                <div className="progress-badge">
+                  {Object.values(checklistProgress).filter(Boolean).length} / 3 COMPLETE
                 </div>
               </div>
-            )}
 
-            {noticeViewMode === 'checklist' && (
-              <div className="notice-checklist-card">
-                <h4>ACTION CHECKLIST FOR CANDIDATE</h4>
-                <ul className="checklist">
-                  <li className="checked">
-                    <span className="chk-icon">✓</span>
-                    <span>Submit abstract and draft architecture diagram</span>
-                  </li>
-                  <li>
-                    <span className="chk-icon">○</span>
-                    <span>Compile LaTeX documentation PDF (`document.pdf`)</span>
-                  </li>
-                  <li>
-                    <span className="chk-icon">○</span>
-                    <span>Record 3-minute video demonstration walkthrough</span>
-                  </li>
-                  <li>
-                    <span className="chk-icon">○</span>
-                    <span>Tag git release commit `v1.0.0-final` on repository</span>
-                  </li>
-                </ul>
+              <div className="tr-deadline-box">
+                <span className="dl-lbl">DEADLINE COUNTDOWN</span>
+                <strong className="dl-val">OCTOBER 15 • 11:59 PM</strong>
+                <span className="dl-status">8 DAYS REMAINING</span>
               </div>
-            )}
+
+              <ul className="action-checklist">
+                <li
+                  className={`check-item ${checklistProgress.req1 ? 'done' : ''}`}
+                  onClick={() =>
+                    setChecklistProgress((prev) => ({ ...prev, req1: !prev.req1 }))
+                  }
+                >
+                  <span className="ch-box">{checklistProgress.req1 ? '✓' : '○'}</span>
+                  <div>
+                    <strong>LaTeX Documentation PDF</strong>
+                    <span>Compile architecture & verification report</span>
+                  </div>
+                </li>
+
+                <li
+                  className={`check-item ${checklistProgress.req2 ? 'done' : ''}`}
+                  onClick={() =>
+                    setChecklistProgress((prev) => ({ ...prev, req2: !prev.req2 }))
+                  }
+                >
+                  <span className="ch-box">{checklistProgress.req2 ? '✓' : '○'}</span>
+                  <div>
+                    <strong>3-Minute Video Walkthrough</strong>
+                    <span>Record feature demonstration & verification</span>
+                  </div>
+                </li>
+
+                <li
+                  className={`check-item ${checklistProgress.req3 ? 'done' : ''}`}
+                  onClick={() =>
+                    setChecklistProgress((prev) => ({ ...prev, req3: !prev.req3 }))
+                  }
+                >
+                  <span className="ch-box">{checklistProgress.req3 ? '✓' : '○'}</span>
+                  <div>
+                    <strong>GitHub Tagged Release</strong>
+                    <span>Publish release `v1.0.0-final` on main branch</span>
+                  </div>
+                </li>
+              </ul>
+            </div>
           </div>
         </div>
       </section>
 
-      {/* SECTION 04 — OPPORTUNITY VERIFICATION TRAIL SHOWCASE */}
+      {/* SECTION 04 — OPPORTUNITY VERIFICATION (DEMO CHECK) */}
       <section id="sec-04" data-section="4" className="case-study-section">
         <div className="section-header-block">
-          <div className="eyebrow">04 / OPPORTUNITY VERIFICATION CONCEPT</div>
-          <h2>DON'T JUST TRUST IT. FOLLOW THE EVIDENCE.</h2>
+          <div className="eyebrow-row">
+            <span className="eyebrow">04 / OPPORTUNITY VERIFICATION</span>
+            <span className="concept-badge">DEMO CHECK</span>
+          </div>
+          <h2>DON'T TRUST. VERIFY.</h2>
           <p className="subtitle">
-            Investigate opportunity authenticity by tracing domain registration, salary benchmarks, and corporate registry verification markers.
+            Flow: OPPORTUNITY → SOURCE → ORGANIZATION → CLAIMS → EVIDENCE → CHECKS → VERIFICATION TRAIL
           </p>
         </div>
 
         <div className="verification-container">
+          <div className="ver-inputs-grid">
+            <div className="v-field">
+              <label>OPPORTUNITY TITLE</label>
+              <input
+                type="text"
+                value={oppName}
+                onChange={(e) => setOppName(e.target.value)}
+              />
+            </div>
+            <div className="v-field">
+              <label>ORGANIZATION</label>
+              <input
+                type="text"
+                value={oppOrg}
+                onChange={(e) => setOppOrg(e.target.value)}
+              />
+            </div>
+            <div className="v-field">
+              <label>CLAIMED COMPENSATION</label>
+              <input
+                type="text"
+                value={oppSalary}
+                onChange={(e) => setOppSalary(e.target.value)}
+              />
+            </div>
+            <div className="v-field">
+              <label>DEADLINE</label>
+              <input
+                type="text"
+                value={oppDeadline}
+                onChange={(e) => setOppDeadline(e.target.value)}
+              />
+            </div>
+            <div className="v-field full-width">
+              <label>ELIGIBILITY RULE</label>
+              <input
+                type="text"
+                value={oppEligibility}
+                onChange={(e) => setOppEligibility(e.target.value)}
+              />
+            </div>
+            <div className="v-field full-width">
+              <label>SOURCE URL</label>
+              <input
+                type="text"
+                value={oppUrl}
+                onChange={(e) => setOppUrl(e.target.value)}
+              />
+            </div>
+          </div>
+
+          <div className="ver-action-bar">
+            <button
+              className="ver-run-btn"
+              onClick={() => setVerificationActive(!verificationActive)}
+            >
+              {verificationActive ? 'RE-RUN VERIFICATION CHECKS' : 'RUN AUTHENTICITY CHECKS'}
+            </button>
+          </div>
+
+          {/* Evidence Trail Breakdown */}
           <div className="opportunity-header-card">
             <div className="opp-meta">
-              <span className="opp-badge">REMOTE OPPORTUNITY</span>
-              <h3>Senior Systems Engineer — Global Tech Labs</h3>
-              <span className="opp-comp">$160,000 / yr • Remote (US / India)</span>
+              <span className="opp-badge">EVIDENCE ANALYSIS</span>
+              <h3>{oppName} — {oppOrg}</h3>
+              <span className="opp-comp">{oppSalary} • {oppEligibility}</span>
             </div>
             <div className="opp-status-pill">
-              <span className="live-dot" /> VERIFIED (98% CONFIDENCE)
+              <span className="live-dot" /> VERIFIED MATCH (94% CONFIDENCE)
             </div>
           </div>
 
@@ -1466,43 +2043,43 @@ function App() {
             <div className="trail-item">
               <span className="trail-step">01</span>
               <div className="trail-info">
-                <strong>DOMAIN AUTHENTICITY</strong>
-                <span>Registrar: Cloudflare Inc. • Age: 6 Years</span>
+                <strong>DOMAIN REGISTRATION & AUTHENTICITY</strong>
+                <span>Source domain `globaltechlabs.org` • Age: 6.4 Years • SSL Verified</span>
               </div>
-              <span className="ver-badge v-pass">VERIFIED</span>
+              <span className="ver-badge v-pass">✓ VERIFIED</span>
             </div>
 
             <div className="trail-item">
               <span className="trail-step">02</span>
               <div className="trail-info">
-                <strong>CORPORATE REGISTRY</strong>
-                <span>Entity #9402-A • Active License in Good Standing</span>
+                <strong>CORPORATE REGISTRY & ENTITY SEARCH</strong>
+                <span>Entity #9402-A • Registered Corporation in Good Standing</span>
               </div>
-              <span className="ver-badge v-pass">VERIFIED</span>
+              <span className="ver-badge v-pass">✓ VERIFIED</span>
             </div>
 
             <div className="trail-item">
               <span className="trail-step">03</span>
               <div className="trail-info">
-                <strong>SALARY BENCHMARK</strong>
-                <span>Market Range: $140K–$175K (Listed $160K is in range)</span>
+                <strong>COMPENSATION & MARKET BENCHMARK</strong>
+                <span>Market Range: $125K–$160K • Listed offer is within expected standard</span>
               </div>
-              <span className="ver-badge v-pass">MATCHED</span>
+              <span className="ver-badge v-pass">✓ MATCHED</span>
             </div>
 
             <div className="trail-item">
               <span className="trail-step">04</span>
               <div className="trail-info">
-                <strong>RECRUITER AUTHENTICITY</strong>
-                <span>SPF/DKIM Signed Recruiter Email Address</span>
+                <strong>ELIGIBILITY & DEADLINE CONSISTENCY</strong>
+                <span>Claimed: {oppEligibility} • Source: Matched with university portal guidelines</span>
               </div>
-              <span className="ver-badge v-pass">VERIFIED</span>
+              <span className="ver-badge v-pass">✓ CONSISTENT</span>
             </div>
           </div>
         </div>
       </section>
 
-      {/* FOOTER & CORE GRAPH LOOP */}
+      {/* FOOTER */}
       <footer className="app-footer">
         <div className="footer-content">
           <BrandLogo />
