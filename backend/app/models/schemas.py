@@ -5,6 +5,16 @@ class DecisionInput(BaseModel):
     inventory: float = Field(default=60, ge=0)
     capacity: float = Field(default=100, gt=0)
     lead_time: float = Field(default=7, ge=0)
+    cost_per_unit: float = Field(default=500, ge=0)
+    service_level: float = Field(default=95, ge=0, le=100)
+    market_growth: float = Field(default=10)
+    disruption_risk: float = Field(default=25, ge=0, le=100)
+    supplier_reliability: float = Field(default=90, ge=0, le=100)
+    logistics_delay: float = Field(default=0, ge=0)
+    workforce_capacity: float = Field(default=100, ge=0, le=100)
+    energy_cost: float = Field(default=100, ge=0)
+    safety_stock: float = Field(default=30, ge=0)
+    forecast_confidence: float = Field(default=90, ge=0, le=100)
     previous_state: dict | None = Field(default=None)
 class CausalStep(BaseModel):
     step: int
@@ -48,6 +58,36 @@ class FuturesComparisonResult(BaseModel):
     active_slots: list[str]
     summary: str
     rows: list[MetricComparisonRow]
+class AssumptionItem(BaseModel):
+    name: str
+    value: str
+    unit: str
+    source: Literal["USER_INPUT", "SYSTEM_DEFAULT", "DERIVED", "FALLBACK"]
+    impact_level: Literal["HIGH", "MEDIUM", "LOW"]
+    uncertainty_pct: float
+    effect_description: str
+
+class SensitivityPoint(BaseModel):
+    param_value: float
+    utilization: float
+    delay_days: float
+    cost: float
+    risk: Literal["LOW", "MEDIUM", "HIGH"]
+
+class ParameterSensitivity(BaseModel):
+    param_name: str
+    base_value: float
+    unit: str
+    impact_direction: Literal["INCREASING_RISK", "DECREASING_RISK", "STABLE"]
+    impact_magnitude: Literal["HIGH", "MODERATE", "LOW"]
+    sweep_points: list[SensitivityPoint]
+
+class SensitivityAnalysisResult(BaseModel):
+    base_decision: DecisionInput
+    base_result: SimulationResult
+    sensitivities: list[ParameterSensitivity]
+    multi_variable_stress: dict
+
 class SimulationResult(BaseModel):
     demand: float
     inventory: float
@@ -63,11 +103,14 @@ class SimulationResult(BaseModel):
     causal_summary: str
     counterfactuals: list[CounterfactualOption]
     state_change: StateChange
+    assumptions: list[AssumptionItem] = Field(default_factory=list)
+
 class EvidenceTraceItem(BaseModel):
     metric_name: str
     exact_value: str
     source_component: str
     description: str
+
 class DecisionExplanation(BaseModel):
     provider_used: str
     is_ai_generated: bool
@@ -78,6 +121,7 @@ class DecisionExplanation(BaseModel):
     relevant_trade_off: str
     deterministic_facts: list[str]
     evidence_trace: list[EvidenceTraceItem]
+
 class ExplanationRequest(BaseModel):
     decision: DecisionInput
     result: SimulationResult

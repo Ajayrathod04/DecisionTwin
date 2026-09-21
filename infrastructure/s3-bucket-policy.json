@@ -1,0 +1,25 @@
+{
+  "Bucket": "decisiontwin-assets-ap-south-1",
+  "CORSConfiguration": {
+    "CORSRules": [
+      {
+        "AllowedHeaders": ["*"],
+        "AllowedMethods": ["GET", "HEAD"],
+        "AllowedOrigins": ["*"],
+        "MaxAgeSeconds": 3000
+      }
+    ]
+  },
+  "Policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "PublicReadGetObject",
+        "Effect": "Allow",
+        "Principal": "*",
+        "Action": "s3:GetObject",
+        "Resource": "arn:aws:s3:::decisiontwin-assets-ap-south-1/*"
+      }
+    ]
+  }
+}

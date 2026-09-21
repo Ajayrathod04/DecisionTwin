@@ -1,0 +1,22 @@
+{
+  "AWSEBDockerrunVersion": "1",
+  "name": "decisiontwin-api",
+  "description": "DecisionTwin FastAPI Deterministic Simulation Core on AWS Elastic Beanstalk",
+  "ports": [
+    {
+      "containerPort": "8000",
+      "hostPort": "80"
+    }
+  ],
+  "environment": [
+    {
+      "name": "ENVIRONMENT",
+      "value": "production"
+    },
+    {
+      "name": "AWS_REGION",
+      "value": "ap-south-1"
+    }
+  ],
+  "logging": "/var/log/nginx"
+}

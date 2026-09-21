@@ -1,11 +1,15 @@
 import math
 from app.models.schemas import (
+    AssumptionItem,
     CausalStep,
     CounterfactualOption,
     DecisionInput,
     FuturesComparisonResult,
     MetricComparisonRow,
     MetricDelta,
+    ParameterSensitivity,
+    SensitivityAnalysisResult,
+    SensitivityPoint,
     SimulationResult,
     StateChange,
 )
@@ -13,31 +17,32 @@ from app.models.schemas import (
 
 
 def simulate(decision: DecisionInput) -> SimulationResult:
-    utilization = decision.demand / decision.capacity
+    effective_capacity = max(decision.capacity * (decision.workforce_capacity / 100.0), 1.0)
+    utilization = decision.demand / effective_capacity
 
-    overload = max(decision.demand - decision.capacity, 0)
+    overload = max(decision.demand - effective_capacity, 0)
 
     projected_inventory = max(
         decision.inventory - overload,
         0,
     )
 
-    delay_days = decision.lead_time + (overload / decision.capacity) * decision.lead_time
+    delay_days = decision.lead_time + (overload / effective_capacity) * decision.lead_time + decision.logistics_delay
 
     cost = (
-        decision.demand * 500
+        decision.demand * decision.cost_per_unit
         + max(decision.demand - decision.inventory, 0) * 300
         + overload * 700
     )
 
-    if utilization >= 1.2:
+    if utilization >= 1.2 or decision.disruption_risk >= 75:
         risk = "HIGH"
-    elif utilization >= 1.0:
+    elif utilization >= 1.0 or decision.disruption_risk >= 45:
         risk = "MEDIUM"
     else:
         risk = "LOW"
 
-    bottleneck = "capacity" if overload > 0 else None
+    bottleneck = "capacity" if overload > 0 else ("logistics" if decision.logistics_delay > 3 else None)
 
     # Deterministic Causal Explanation Generation
     demand_val = int(decision.demand) if decision.demand.is_integer() else round(decision.demand, 1)
@@ -340,6 +345,54 @@ def simulate(decision: DecisionInput) -> SimulationResult:
             deltas=deltas,
         )
 
+    assumptions = [
+        AssumptionItem(
+            name="Demand Volume",
+            value=str(demand_val),
+            unit="units",
+            source="USER_INPUT",
+            impact_level="HIGH" if utilization >= 1.0 else "MEDIUM",
+            uncertainty_pct=10.0,
+            effect_description="Directly dictates capacity load and projected stock consumption.",
+        ),
+        AssumptionItem(
+            name="Factory Capacity",
+            value=str(cap_val),
+            unit="units",
+            source="USER_INPUT",
+            impact_level="HIGH",
+            uncertainty_pct=5.0,
+            effect_description="Sets maximum throughput limit before queue delays accumulate.",
+        ),
+        AssumptionItem(
+            name="Workforce Capacity",
+            value=f"{decision.workforce_capacity}%",
+            unit="%",
+            source="USER_INPUT" if decision.workforce_capacity != 100 else "SYSTEM_DEFAULT",
+            impact_level="HIGH" if decision.workforce_capacity < 90 else "LOW",
+            uncertainty_pct=8.0,
+            effect_description="Scales effective processing capacity.",
+        ),
+        AssumptionItem(
+            name="Logistics Lead Time",
+            value=f"{lead_val}",
+            unit="days",
+            source="USER_INPUT",
+            impact_level="MEDIUM",
+            uncertainty_pct=12.0,
+            effect_description="Baseline order-to-delivery lead time.",
+        ),
+        AssumptionItem(
+            name="Disruption Risk Factor",
+            value=f"{decision.disruption_risk}%",
+            unit="%",
+            source="USER_INPUT" if decision.disruption_risk != 25 else "SYSTEM_DEFAULT",
+            impact_level="HIGH" if decision.disruption_risk >= 50 else "LOW",
+            uncertainty_pct=15.0,
+            effect_description="Upstream vulnerability threshold.",
+        ),
+    ]
+
     return SimulationResult(
         demand=decision.demand,
         inventory=decision.inventory,
@@ -355,6 +408,90 @@ def simulate(decision: DecisionInput) -> SimulationResult:
         causal_summary=causal_summary,
         counterfactuals=counterfactuals,
         state_change=state_change,
+        assumptions=assumptions,
+    )
+
+
+def analyze_sensitivity(decision: DecisionInput) -> SensitivityAnalysisResult:
+    base_res = simulate(decision)
+
+    sweep_params = [
+        ("demand", decision.demand, "units", 20.0, 200.0, 5),
+        ("capacity", decision.capacity, "units", 40.0, 220.0, 5),
+        ("inventory", decision.inventory, "units", 0.0, 160.0, 5),
+        ("lead_time", decision.lead_time, "days", 1.0, 30.0, 5),
+        ("cost_per_unit", decision.cost_per_unit, "$", 100.0, 1000.0, 5),
+        ("disruption_risk", decision.disruption_risk, "%", 0.0, 100.0, 5),
+        ("logistics_delay", decision.logistics_delay, "days", 0.0, 15.0, 5),
+        ("workforce_capacity", decision.workforce_capacity, "%", 40.0, 100.0, 5),
+    ]
+
+    sensitivities: list[ParameterSensitivity] = []
+
+    for p_name, base_v, unit, p_min, p_max, steps in sweep_params:
+        pts: list[SensitivityPoint] = []
+        step_size = max((p_max - p_min) / (steps - 1), 1.0)
+
+        for idx in range(steps):
+            v = p_min + idx * step_size
+            dec_copy = decision.model_copy(update={p_name: v})
+            r = simulate(dec_copy)
+            pts.append(
+                SensitivityPoint(
+                    param_value=round(v, 2),
+                    utilization=round(r.utilization, 4),
+                    delay_days=round(r.delay_days, 2),
+                    cost=round(r.cost, 2),
+                    risk=r.risk,
+                )
+            )
+
+        first_r = pts[0].risk
+        last_r = pts[-1].risk
+        if p_name in ["demand", "disruption_risk", "logistics_delay", "cost_per_unit"]:
+            direction = "INCREASING_RISK" if (last_r == "HIGH" or pts[-1].cost > pts[0].cost) else "STABLE"
+        else:
+            direction = "DECREASING_RISK" if (first_r == "HIGH" and last_r != "HIGH") else "STABLE"
+
+        max_cost_diff = abs(pts[-1].cost - pts[0].cost)
+        magnitude = "HIGH" if max_cost_diff > 20000 or first_r != last_r else ("MODERATE" if max_cost_diff > 5000 else "LOW")
+
+        sensitivities.append(
+            ParameterSensitivity(
+                param_name=p_name,
+                base_value=base_v,
+                unit=unit,
+                impact_direction=direction,
+                impact_magnitude=magnitude,
+                sweep_points=pts,
+            )
+        )
+
+    stress_dec = decision.model_copy(
+        update={
+            "demand": min(decision.demand * 1.4, 200.0),
+            "capacity": max(decision.capacity * 0.8, 40.0),
+            "lead_time": min(decision.lead_time * 1.5, 30.0),
+            "disruption_risk": min(decision.disruption_risk + 30.0, 100.0),
+        }
+    )
+    stress_res = simulate(stress_dec)
+
+    multi_stress = {
+        "title": "Combined Multi-Variable Stress Test",
+        "description": "Evaluates system stability under simultaneous demand surge (+40%), capacity contraction (-20%), and logistics delay (+50%).",
+        "stress_decision": stress_dec.model_dump(exclude={"previous_state"}),
+        "stress_result": stress_res.model_dump(exclude={"causal_chain", "state_change"}),
+        "delta_cost": round(stress_res.cost - base_res.cost, 2),
+        "delta_delay": round(stress_res.delay_days - base_res.delay_days, 2),
+        "risk_shift": f"{base_res.risk} → {stress_res.risk}",
+    }
+
+    return SensitivityAnalysisResult(
+        base_decision=decision,
+        base_result=base_res,
+        sensitivities=sensitivities,
+        multi_variable_stress=multi_stress,
     )
 
 
